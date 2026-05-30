@@ -1,79 +1,87 @@
 #include "pdb.h"
-#include "cube_defs.h"
 #include <fstream>
 #include <stdexcept>
-#include <algorithm>
-#include <cstring>
 
-// ---------------------------------------------------------------------------
-// PatternDB
-// ---------------------------------------------------------------------------
+namespace puzzle {
 
-PatternDB::PatternDB(std::size_t num_entries)
-    : size_(num_entries)
-{
-    std::size_t bytes = (num_entries + 1) / 2;
-    data_.assign(bytes, 0xFFu); // 0xFF → both nibbles = 15 = unvisited
+// File format (little-endian):
+//   uint32 magic = 0x50444231 ("PDB1")
+//   uint32 group_size  k
+//   int32  group_tiles[k]
+//   uint64 table_size  = pdb_size(k)
+//   uint8  table[table_size]
+static constexpr uint32_t PDB_MAGIC = 0x50444231u;
+
+void AdditivePDB::init_group(std::vector<int> group_tiles) {
+    group_ = std::move(group_tiles);
+    table_.assign(pdb_size(static_cast<int>(group_.size())), 0xFF); // 0xFF = unfilled
 }
 
-static constexpr uint32_t PDB_MAGIC   = 0x50444221u; // "PDB!"
-static constexpr uint32_t PDB_VERSION = 1u;
+// Partial-permutation (Lehmer) rank of the group's tile positions.
+//   For each group tile (in fixed order) take its cell, count how many
+//   not-yet-used cells are smaller, and fold into a mixed-radix number with
+//   bases 16, 15, 14, ...  -> dense index in [0, 16*15*...*(16-k+1)).
+uint64_t AdditivePDB::rank(State s) const {
+    // cell position of each tile value, one scan.
+    int pos[N_CELLS];
+    for (int p = 0; p < N_CELLS; ++p) pos[tile_at(s, p)] = p;
 
-void PatternDB::load(const std::string& path) {
+    uint32_t used = 0; // bitmask of consumed cells
+    uint64_t r = 0;
+    int i = 0;
+    for (int tile : group_) {
+        const int cell = pos[tile];
+        // count unused cells with index < cell
+        const uint32_t below = used & ((1u << cell) - 1u);
+        const int smaller = cell - __builtin_popcount(below);
+        r = r * static_cast<uint64_t>(N_CELLS - i) + static_cast<uint64_t>(smaller);
+        used |= (1u << cell);
+        ++i;
+    }
+    return r;
+}
+
+bool AdditivePDB::load(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
-    if (!f) throw std::runtime_error("Cannot open PDB file: " + path);
+    if (!f) return false;
 
-    uint32_t magic, version;
-    uint64_t n_entries;
-    f.read(reinterpret_cast<char*>(&magic),    4);
-    f.read(reinterpret_cast<char*>(&version),  4);
-    f.read(reinterpret_cast<char*>(&n_entries),8);
+    uint32_t magic = 0, k = 0;
+    f.read(reinterpret_cast<char*>(&magic), 4);
+    f.read(reinterpret_cast<char*>(&k), 4);
+    if (magic != PDB_MAGIC || k == 0 || k > N_CELLS) return false;
 
-    if (magic != PDB_MAGIC)
-        throw std::runtime_error("Bad PDB magic in: " + path);
-    if (n_entries != size_)
-        throw std::runtime_error("PDB entry count mismatch in: " + path);
+    group_.resize(k);
+    for (uint32_t i = 0; i < k; ++i) {
+        int32_t t = 0;
+        f.read(reinterpret_cast<char*>(&t), 4);
+        group_[i] = t;
+    }
 
-    std::size_t bytes = (size_ + 1) / 2;
-    f.read(reinterpret_cast<char*>(data_.data()), static_cast<std::streamsize>(bytes));
-    if (!f) throw std::runtime_error("Truncated PDB file: " + path);
+    uint64_t n = 0;
+    f.read(reinterpret_cast<char*>(&n), 8);
+    if (n != pdb_size(static_cast<int>(k))) return false;
+
+    table_.resize(n);
+    f.read(reinterpret_cast<char*>(table_.data()), static_cast<std::streamsize>(n));
+    return static_cast<bool>(f);
 }
 
-void PatternDB::save(const std::string& path) const {
+bool AdditivePDB::save(const std::string& path) const {
     std::ofstream f(path, std::ios::binary);
-    if (!f) throw std::runtime_error("Cannot write PDB file: " + path);
+    if (!f) return false;
 
-    uint32_t magic   = PDB_MAGIC;
-    uint32_t version = PDB_VERSION;
-    uint64_t n_ent   = static_cast<uint64_t>(size_);
-    f.write(reinterpret_cast<const char*>(&magic),   4);
-    f.write(reinterpret_cast<const char*>(&version), 4);
-    f.write(reinterpret_cast<const char*>(&n_ent),   8);
-
-    std::size_t bytes = (size_ + 1) / 2;
-    f.write(reinterpret_cast<const char*>(data_.data()), static_cast<std::streamsize>(bytes));
+    const uint32_t magic = PDB_MAGIC;
+    const uint32_t k = static_cast<uint32_t>(group_.size());
+    f.write(reinterpret_cast<const char*>(&magic), 4);
+    f.write(reinterpret_cast<const char*>(&k), 4);
+    for (int t : group_) {
+        const int32_t v = t;
+        f.write(reinterpret_cast<const char*>(&v), 4);
+    }
+    const uint64_t n = table_.size();
+    f.write(reinterpret_cast<const char*>(&n), 8);
+    f.write(reinterpret_cast<const char*>(table_.data()), static_cast<std::streamsize>(n));
+    return static_cast<bool>(f);
 }
 
-// ---------------------------------------------------------------------------
-// MaxHeuristic
-// ---------------------------------------------------------------------------
-
-MaxHeuristic::MaxHeuristic(const PatternDB& corner,
-                           const PatternDB& edge_a,
-                           const PatternDB& edge_b)
-    : corner_(corner), edge_a_(edge_a), edge_b_(edge_b) {}
-
-uint8_t MaxHeuristic::operator()(const CubeState& s) const noexcept {
-    // Plain 3-PDB max heuristic: max(corner, edge_A, edge_B). Admissible.
-    //
-    // NOTE: a symmetry-enhanced variant (max over the 16 U/D-preserving
-    // conjugates, see symmetry.h) was implemented and verified correct, but
-    // benchmarks showed it ~4x SLOWER here: these PDBs cap at depth ~11, so the
-    // max-over-symmetries cannot exceed that ceiling and yields almost no extra
-    // pruning while costing 16x the lookups. Kept in the tree for reference.
-    const uint32_t ci = corner_perm_rank(s) * 2187u + corner_ori_rank(s);
-    const uint32_t ea = k_perm_rank(s, EDGE_SET_A, 6) * 64u + k_flip_rank(s, EDGE_SET_A, 6);
-    const uint32_t eb = k_perm_rank(s, EDGE_SET_B, 6) * 64u + k_flip_rank(s, EDGE_SET_B, 6);
-
-    return std::max({corner_.get(ci), edge_a_.get(ea), edge_b_.get(eb)});
-}
+} // namespace puzzle

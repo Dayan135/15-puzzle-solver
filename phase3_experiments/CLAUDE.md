@@ -36,9 +36,9 @@ Two search algorithms under study:
 The search harness will likely be Python (calling the Phase 2 model for `h_θ`) with
 the state transition logic either:
 - Pure Python (simple, slower)
-- C extension wrapping Phase 1's `apply_move` (fast, reuses existing code)
+- C extension wrapping Phase 1's `slide` / neighbor tables (fast, reuses existing code)
 
-The Phase 1 C++ IDA* solver serves as the **baseline** and ground-truth oracle.
+The Phase 1 C++ `IDAStar<SumHeuristic>` solver serves as the **baseline** and ground-truth oracle.
 
 ## Output
 

@@ -1,168 +1,60 @@
-// pdb_builder.cpp — standalone executable that generates all three PDB files.
-// Usage: build_pdbs --out <dir>
+// ---------------------------------------------------------------------------
+// build_pdbs — one-shot generator for the additive 7-8 pattern databases.
 //
-// Generates: corner.pdb (~44 MB), edge_a.pdb (~21 MB), edge_b.pdb (~21 MB)
-// Expected runtime on i7-11700F: ~2-3 hours total.
-
+// STATUS: skeleton.  The query path (AdditivePDB::rank/lookup/load/save) and
+// the partition (puzzle_defs.h) are complete; this builder — the heavy
+// retrograde BFS — is the next step.  generate_data currently runs on
+// ManhattanHeuristic, so the pipeline is end-to-end without these tables.
+//
+// ALGORITHM (per group, e.g. A = {1..7}):
+//   Retrograde, BLANK-AWARE 0-1 BFS from the goal arrangement.
+//     * BFS node   = (positions of the group's k tiles) + (blank position).
+//                    state space = 16 * 15 * ... * (16-k) entries.
+//     * transition = slide the blank to an orthogonal neighbor cell:
+//          - neighbor holds a GROUP tile      -> real pattern move, cost +1
+//          - neighbor holds a don't-care tile -> cost +0
+//       The mixed 0/1 edge weights make this a 0-1 BFS: push 0-cost successors
+//       to the FRONT of a deque, 1-cost successors to the BACK.
+//     * after BFS, PROJECT to the query table:
+//          PDB[pattern_rank] = min over blank position of dist(pattern, blank)
+//       (AdditivePDB::rank ignores the blank, so collapse over it here.)
+//
+// MEMORY (build time, uint8 distance array over the blank-aware space):
+//   Group A (k=7): 16*..*9  =   518,918,400  (~0.5 GB)
+//   Group B (k=8): 16*..*8  = 4,151,347,200  (~4.1 GB)
+//   The target i7 box has the RAM; on a dev machine use a smaller partition
+//   (edit group_of / sizes in puzzle_defs.h) to validate correctness.
+//
+// USAGE (planned):
+//   build_pdbs --out <dir>     ->  writes pdb_a.bin, pdb_b.bin
+// ---------------------------------------------------------------------------
 #include "pdb.h"
-#include "cube_state.h"
-#include "move_tables.h"
-#include "cube_defs.h"
 
-#include <iostream>
-#include <vector>
-#include <queue>
-#include <string>
-#include <chrono>
 #include <cstring>
-#ifdef _WIN32
-#  include <direct.h>   // _mkdir
-#else
-#  include <sys/stat.h> // mkdir
-#endif
+#include <iostream>
+#include <string>
 
-// ---------------------------------------------------------------------------
-// Corner PDB builder
-// Tracks only corner positions and orientations (ignores edges).
-// State key: (perm_rank * 2187 + ori_rank), stored as a single uint32_t index.
-// ---------------------------------------------------------------------------
-static void build_corner_pdb(const std::string& out_path) {
-    using Clock = std::chrono::steady_clock;
-    std::cout << "Building corner PDB (" << CORNER_PDB_SIZE << " entries)...\n" << std::flush;
-    auto t0 = Clock::now();
+using namespace puzzle;
 
-    PatternDB pdb(CORNER_PDB_SIZE);
-    const MoveTables& mt = MoveTables::get();
-
-    CubeState goal = solved_state();
-    uint32_t goal_idx = corner_perm_rank(goal) * 2187u + corner_ori_rank(goal);
-    pdb.set(goal_idx, 0);
-
-    // BFS over corner states only.
-    // We represent each BFS node as a full CubeState, but only the corner
-    // portion determines the index. Edges are kept at solved (canonical).
-    struct Node { CubeState s; uint8_t depth; };
-    std::queue<Node> bfs;
-    bfs.push({goal, 0});
-
-    uint64_t visited = 1;
-    uint8_t  max_depth = 0;
-
-    while (!bfs.empty()) {
-        Node nd = bfs.front(); bfs.pop();
-        const CubeState& s = nd.s;
-        const uint8_t    d = nd.depth;
-        if (d > max_depth) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
-            std::cout << "  depth " << static_cast<int>(d) << "  visited=" << visited
-                      << "  elapsed=" << elapsed << "s\n" << std::flush;
-            max_depth = d;
-        }
-        for (int m = 0; m < N_MOVES; ++m) {
-            CubeState ns = apply_move(s, m, mt);
-            uint32_t idx = corner_perm_rank(ns) * 2187u + corner_ori_rank(ns);
-            if (pdb.get(idx) == 15u) { // unvisited
-                pdb.set(idx, d + 1u);
-                ++visited;
-                if (visited == CORNER_PDB_SIZE) goto corner_done;
-                bfs.push({ns, static_cast<uint8_t>(d + 1)});
-            }
-        }
-    }
-corner_done:
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
-    std::cout << "  Done. " << visited << "/" << CORNER_PDB_SIZE
-              << " entries in " << elapsed << "s\n" << std::flush;
-    pdb.save(out_path);
-    std::cout << "  Saved: " << out_path << "\n\n";
+static std::vector<int> group_tiles(int group_id) {
+    std::vector<int> g;
+    for (int t = 1; t < N_CELLS; ++t)
+        if (group_of(t) == group_id) g.push_back(t);
+    return g;
 }
 
-// ---------------------------------------------------------------------------
-// 6-Edge PDB builder (generic, used for both edge_a and edge_b)
-// Tracks only the 6 specified edge cubies; ignores corners and other edges.
-// ---------------------------------------------------------------------------
-static void build_edge_pdb(const int* edge_set, int k,
-                            const std::string& label,
-                            const std::string& out_path) {
-    using Clock = std::chrono::steady_clock;
-    std::cout << "Building " << label << " PDB (" << EDGE_PDB_SIZE << " entries)...\n" << std::flush;
-    auto t0 = Clock::now();
-
-    PatternDB pdb(EDGE_PDB_SIZE);
-    const MoveTables& mt = MoveTables::get();
-
-    CubeState goal = solved_state();
-    uint32_t goal_idx = k_perm_rank(goal, edge_set, k) * 64u
-                      + k_flip_rank(goal, edge_set, k);
-    pdb.set(goal_idx, 0);
-
-    struct Node { CubeState s; uint8_t depth; };
-    std::queue<Node> bfs;
-    bfs.push({goal, 0});
-
-    uint64_t visited = 1;
-    uint8_t  max_depth = 0;
-
-    while (!bfs.empty()) {
-        Node nd = bfs.front(); bfs.pop();
-        const CubeState& s = nd.s;
-        const uint8_t    d = nd.depth;
-        if (d > max_depth) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
-            std::cout << "  depth " << static_cast<int>(d) << "  visited=" << visited
-                      << "  elapsed=" << elapsed << "s\n" << std::flush;
-            max_depth = d;
-        }
-        for (int m = 0; m < N_MOVES; ++m) {
-            CubeState ns = apply_move(s, m, mt);
-            uint32_t idx = k_perm_rank(ns, edge_set, k) * 64u
-                         + k_flip_rank(ns, edge_set, k);
-            if (pdb.get(idx) == 15u) {
-                pdb.set(idx, d + 1u);
-                ++visited;
-                if (visited == EDGE_PDB_SIZE) goto edge_done;
-                bfs.push({ns, static_cast<uint8_t>(d + 1)});
-            }
-        }
-    }
-edge_done:
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
-    std::cout << "  Done. " << visited << "/" << EDGE_PDB_SIZE
-              << " entries in " << elapsed << "s\n" << std::flush;
-    pdb.save(out_path);
-    std::cout << "  Saved: " << out_path << "\n\n";
-}
-
-// ---------------------------------------------------------------------------
-// main
-// ---------------------------------------------------------------------------
-int main(int argc, char* argv[]) {
+int main(int argc, char** argv) {
     std::string out_dir = ".";
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--out") out_dir = argv[i + 1];
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) out_dir = argv[++i];
     }
 
-    // Ensure output directory exists (no-op if already present)
-#ifdef _WIN32
-    _mkdir(out_dir.c_str());
-#else
-    mkdir(out_dir.c_str(), 0755);
-#endif
-
-    auto path = [&](const std::string& name) {
-        return out_dir + "/" + name;
-    };
-
-    std::cout << "=== PDB Builder ===\n";
-    std::cout << "Output dir: " << out_dir << "\n\n";
-
-    // Initialize move tables once (triggers singleton construction)
-    (void)MoveTables::get();
-
-    build_corner_pdb(path("corner.pdb"));
-    build_edge_pdb(EDGE_SET_A, 6, "edge_a", path("edge_a.pdb"));
-    build_edge_pdb(EDGE_SET_B, 6, "edge_b", path("edge_b.pdb"));
-
-    std::cout << "All PDBs built successfully.\n";
-    return 0;
+    const auto a = group_tiles(0);
+    const auto b = group_tiles(1);
+    std::cerr << "build_pdbs: NOT YET IMPLEMENTED (skeleton).\n"
+              << "  Group A (" << a.size() << " tiles) -> table " << pdb_size((int)a.size()) << " entries\n"
+              << "  Group B (" << b.size() << " tiles) -> table " << pdb_size((int)b.size()) << " entries\n"
+              << "  Output dir would be: " << out_dir << " (pdb_a.bin, pdb_b.bin)\n"
+              << "  See the header comment in src/pdb_builder.cpp for the BFS algorithm.\n";
+    return 1;
 }

@@ -2,108 +2,140 @@
 
 ## Goal
 
-Generate 100M `[CubeState, OptimalCost]` pairs by solving uniformly random Rubik's Cube states optimally using IDA* with Pattern Database heuristics. Output is binary `.bin` files consumed by Phase 2.
+Generate a massive dataset of `[State, OptimalCost]` pairs by solving uniformly random 15-puzzle
+states optimally using IDA* + admissible heuristics. Output is compact binary `.bin` files consumed
+by Phase 2 (neural network training).
 
 ## Architecture
 
 Two executables:
-- `build_pdbs` — BFS PDB generator. Run **once** before anything else (~2-3 hours).
-- `generate_data` — Main pipeline (~2-4 days on i7-11700F with 14 threads).
+- `build_pdbs` — one-shot additive PDB generator (skeleton; see next step below).
+- `generate_data` — main pipeline; currently runs on the Manhattan heuristic placeholder.
 
 ```
-Work Queue  ──►  14 Solver Threads (IDA*)  ──►  Result Queue  ──►  I/O Thread
-    ▲                                                                    │
-Main Thread                                                    dataset_NNN.bin
-(state gen)                                                  (D:\Search_DB\)
+main thread (generator)
+  scramble(GOAL, 1000 moves) ──► BlockingQueue<State>
+                                       │
+                              N worker threads (IDA*)
+                                       │
+                              BlockingQueue<SolvedRecord>
+                                       │
+                               I/O thread (AsyncWriter)
+                                       │
+                               dataset_NNN.bin
+```
+
+## Heuristic status
+
+| Heuristic         | Status          | Notes                                              |
+|-------------------|-----------------|----------------------------------------------------|
+| Manhattan         | ✅ Working       | Placeholder; weak on deep states, but **correct**  |
+| Additive 7-8 PDBs | 🔲 Next step     | Builder skeleton in `pdb_builder.cpp`; swap is one line in `main.cpp` |
+
+Swapping heuristics is a **one-line change** — `IDAStar` is templated on `H`:
+```cpp
+// Now:   IDAStar<ManhattanHeuristic> solver(heur);
+// After: IDAStar<SumHeuristic>       solver(heur);
 ```
 
 ## Toolchain
 
-- **Compiler**: MinGW-w64 / GCC on Windows 11
 - **Standard**: C++17
-- **Threading**: `std::thread` + condition variables
-- **PDB generation**: OpenMP (BFS parallelism)
-- **Build system**: CMake with MinGW Makefiles
-
-```bash
-mkdir build && cd build
-cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-mingw32-make -j16
-```
+- **Build**: CMake 3.20+ with `cmake -S . -B build && cmake --build build -j`
+- **Dev build** (no cmake): `clang++ -std=c++17 -O2 -pthread -Iinclude src/*.cpp src/main.cpp -o generate_data`
+- **Threading**: `std::thread` + `BlockingQueue` (condition variables)
+- **OpenMP**: optional; reserved for the future PDB BFS builder
 
 ## Key Design Decisions
 
-### State Representation (20 bytes)
-```cpp
-struct CubeState {
-    uint8_t corners[8];  // (position << 2) | orientation  pos∈[0,7], ori∈[0,2]
-    uint8_t edges[12];   // (position << 1) | flip          pos∈[0,11], flip∈[0,1]
-};
+### State — single `uint64_t`
+Nibble at position `p` holds the tile at cell `p`. Goal = `0xFEDCBA9876543210`
+(tile `p` at cell `p`; blank tile 0 at cell 0).
 ```
-Corner/edge index convention: **Kociemba standard**
-- Corners: 0=URF 1=UFL 2=ULB 3=UBR 4=DFR 5=DLF 6=DBL 7=DRB
-- Edges: 0=UR 1=UF 2=UL 3=UB 4=DR 5=DF 6=DL 7=DB 8=FR 9=FL 10=BL 11=BR
-
-### Pattern Databases (RAM: ~86 MB total)
-| PDB       | Size               | Tracks                      |
-|-----------|--------------------|-----------------------------|
-| corner    | 88,179,840 (44 MB) | all 8 corners               |
-| edge_a    | 42,577,920 (21 MB) | UR,UF,UL,UB,FR,FL (0–3+8–9)|
-| edge_b    | 42,577,920 (21 MB) | DR,DF,DL,DB,BL,BR (4–7+10–11)|
-
-Heuristic = `max(corner_h, edge_a_h, edge_b_h)` — admissible.
-
-PDB indices:
+O(1) ops:  tile_at, set_tile, slide
 ```
-corner_index = perm_rank(corners) * 2187 + ori_rank(corners[0..6])
-edge_X_index = k_perm_rank(edge_set_X) * 64 + flip_rank(edge_set_X)
-```
+The blank position is found once at the root (`find_blank`) and carried incrementally through the
+DFS — the hot loop never rescans.
 
-### Disk Format (21 bytes/record → 2.1 GB for 100M)
+### Scrambling — move-based (solvability guaranteed)
+`scramble(GOAL, n_moves, rng)` applies valid random slides, never immediately reversing the prior
+move. **Never use a random nibble permutation** — ~50% of those are unsolvable.
+
+### Additive PDBs — 7-8 split (next step)
+Group A = {1..7}, Group B = {8..15}. Because the groups are **disjoint** and each slide moves
+exactly one tile, the two PDB costs cover disjoint move sets and can be **summed** (admissible).
+This is fundamentally different from Rubik's PDBs, where overlapping cubies force a `max`.
+
+Memory (build-time): Group A ≈ 0.5 GB, Group B ≈ 4.1 GB. Target i7 box has the RAM.
+
+### File format (9 bytes/record)
 ```
-File header (16 bytes): magic(4)=0x52435542 + version(4) + n_records(8)
-Per record (21 bytes):  corners[8] + edges[12] + cost(1)
-File split at 1 GB → dataset_000.bin, dataset_001.bin, ...
-Output path: D:\Search_DB\
+Header (16 bytes): magic=0x50313544 ("P15D") + version=1 + n_records (uint64, patched on close)
+Record  (9 bytes): uint64 state (LE) + uint8 cost
+Files roll at 1 GB → dataset_000.bin, dataset_001.bin, ...
 ```
 
-## Execution Order
+Reading in Python (Phase 2):
+```python
+import struct
+
+def read_dataset(path):
+    with open(path, 'rb') as f:
+        magic, version = struct.unpack('<II', f.read(8))
+        n = struct.unpack('<Q', f.read(8))[0]
+        for _ in range(n):
+            state, cost = struct.unpack('<QB', f.read(9))
+            yield state, cost
+```
+
+## Build & Run
 
 ```bash
-# Step 1: Build PDBs (~2-3 hours, one-time)
-./build/build_pdbs.exe --out D:/Search_DB/
+# configure + build all targets
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 
-# Step 2: Generate dataset (~2-4 days)
-./build/generate_data.exe \
+# correctness test (always run first)
+./build/verify_state
+
+# (future) build PDBs once, ~hours, needs ~4 GB RAM for group B
+./build/build_pdbs --out /path/to/db/
+
+# generate dataset
+./build/generate_data \
     --threads 14 \
-    --target 100000000 \
-    --pdb-dir D:/Search_DB/ \
-    --out-dir D:/Search_DB/
+    --target 10000000 \
+    --scramble 1000 \
+    --out-dir /path/to/output/ \
+    --seed 42
 ```
 
 ## File Map
 
 ```
 include/
-  cube_defs.h       # Constants, enums, edge sets, PDB sizes
-  move_tables.h     # MoveTables struct + inline apply_move()
-  cube_state.h      # CubeState functions (solved, random, ranking)
-  blocking_queue.h  # Thread-safe bounded queue
-  pdb.h             # PatternDB + MaxHeuristic
-  ida_star.h        # IDAStar solver class
-  io_writer.h       # AsyncWriter + SolvedRecord
+  puzzle_defs.h      # N_CELLS, GOAL, neighbor table, tile→group map, pdb_size()
+  puzzle_state.h     # uint64_t State, tile_at, slide, find_blank, scramble, manhattan
+  blocking_queue.h   # thread-safe bounded queue (generic, reused from prior project)
+  pdb.h              # AdditivePDB (rank/load/save), SumHeuristic, ManhattanHeuristic
+  ida_star.h         # IDAStar<H> — templated IDA* with reverse-move pruning
+  io_writer.h        # AsyncWriter, SolvedRecord (9-byte binary format)
 src/
-  move_tables.cpp   # 6 quarter-turn tables → derives all 18 by composition
-  cube_state.cpp    # Lehmer rank, k-perm rank, random walk
-  pdb.cpp           # nibble-packed load/save, MaxHeuristic query
-  pdb_builder.cpp   # BFS from goal (main for build_pdbs)
-  ida_star.cpp      # IDA* with 3-level move pruning
-  main.cpp          # Orchestrator (main for generate_data)
+  puzzle_state.cpp   # neighbor-table init, scramble, is_solvable, manhattan
+  pdb.cpp            # partial-perm rank, nibble load/save
+  pdb_builder.cpp    # 0-1 retrograde BFS skeleton (next step)
+  main.cpp           # orchestrator for generate_data
+tests/
+  verify_state.cpp   # pack/slide round-trip, solvability invariant, IDA* optimality spot checks
 CMakeLists.txt
 ```
 
-## Notes for Future Development
+## Commit scopes
 
-- **Verifying move tables**: Run `R U R' U'` six times from solved — must return to solved.
-- **Resuming generation**: The generator doesn't checkpoint. If interrupted, existing `.bin` files remain valid; restart with a new seed and the same `--out-dir`.
-- **Adding a heuristic**: To swap in a learned heuristic for Phase 3, replace `MaxHeuristic` in `IDAStar` with a templated heuristic parameter.
+- `gen` — state generation, scrambling, orchestrator
+- `pdb` — pattern database builder and query path
+- `ida` — IDA* solver
+- `io` — binary file format and async writer
+- `tests` — correctness tests
+- `build` — CMakeLists.txt
+- `docs` — CLAUDE.md files
