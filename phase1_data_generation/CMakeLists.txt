@@ -34,6 +34,7 @@ set(COMMON_SRCS
     src/cube_state.cpp
     src/move_tables.cpp
     src/pdb.cpp
+    src/symmetry.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,15 @@ target_link_libraries(build_pdbs PRIVATE OpenMP::OpenMP_CXX)
 if(WIN32 AND MINGW)
     target_link_libraries(build_pdbs PRIVATE -lpthread)
 endif()
+
+# ---------------------------------------------------------------------------
+# Target 3: verify_pdbs — correctness test for generated PDB files
+# ---------------------------------------------------------------------------
+add_executable(verify_pdbs
+    ${COMMON_SRCS}
+    tests/verify_pdbs.cpp
+)
+target_include_directories(verify_pdbs PRIVATE include)
 
 # ---------------------------------------------------------------------------
 # Build instructions (printed at configure time as a reminder)

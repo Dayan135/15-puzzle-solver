@@ -64,19 +64,16 @@ MaxHeuristic::MaxHeuristic(const PatternDB& corner,
     : corner_(corner), edge_a_(edge_a), edge_b_(edge_b) {}
 
 uint8_t MaxHeuristic::operator()(const CubeState& s) const noexcept {
-    // Corner PDB index
-    uint32_t ci = corner_perm_rank(s) * 2187u + corner_ori_rank(s);
-    //arrangement of 8 corners → [0, 40319] * 2187 + orientation of 8 corners → [0, 2186]
+    // Plain 3-PDB max heuristic: max(corner, edge_A, edge_B). Admissible.
+    //
+    // NOTE: a symmetry-enhanced variant (max over the 16 U/D-preserving
+    // conjugates, see symmetry.h) was implemented and verified correct, but
+    // benchmarks showed it ~4x SLOWER here: these PDBs cap at depth ~11, so the
+    // max-over-symmetries cannot exceed that ceiling and yields almost no extra
+    // pruning while costing 16x the lookups. Kept in the tree for reference.
+    const uint32_t ci = corner_perm_rank(s) * 2187u + corner_ori_rank(s);
+    const uint32_t ea = k_perm_rank(s, EDGE_SET_A, 6) * 64u + k_flip_rank(s, EDGE_SET_A, 6);
+    const uint32_t eb = k_perm_rank(s, EDGE_SET_B, 6) * 64u + k_flip_rank(s, EDGE_SET_B, 6);
 
-    // 6-edge PDB A index
-    uint32_t ea_idx = k_perm_rank(s, EDGE_SET_A, 6) * 64u + k_flip_rank(s, EDGE_SET_A, 6);
-
-    // 6-edge PDB B index
-    uint32_t eb_idx = k_perm_rank(s, EDGE_SET_B, 6) * 64u + k_flip_rank(s, EDGE_SET_B, 6);
-
-    uint8_t hc = corner_.get(ci);
-    uint8_t ha = edge_a_.get(ea_idx);
-    uint8_t hb = edge_b_.get(eb_idx);
-
-    return std::max({hc, ha, hb});
+    return std::max({corner_.get(ci), edge_a_.get(ea), edge_b_.get(eb)});
 }

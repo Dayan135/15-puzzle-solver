@@ -10,8 +10,12 @@
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
-#include <filesystem>
 #include <stdexcept>
+#ifdef _WIN32
+#  include <direct.h>
+#else
+#  include <sys/stat.h>
+#endif
 #include <iostream>
 
 // One solved record: the cube state plus its optimal depth.
@@ -62,7 +66,11 @@ public:
 
 private:
     void run(BlockingQueue<SolvedRecord>& q) {
-        std::filesystem::create_directories(output_dir_);
+#ifdef _WIN32
+        _mkdir(output_dir_.c_str());
+#else
+        mkdir(output_dir_.c_str(), 0755);
+#endif
 
         std::vector<SolvedRecord> batch;
         batch.reserve(4096);

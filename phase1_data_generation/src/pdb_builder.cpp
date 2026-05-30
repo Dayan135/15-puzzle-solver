@@ -15,7 +15,11 @@
 #include <string>
 #include <chrono>
 #include <cstring>
-#include <filesystem>
+#ifdef _WIN32
+#  include <direct.h>   // _mkdir
+#else
+#  include <sys/stat.h> // mkdir
+#endif
 
 // ---------------------------------------------------------------------------
 // Corner PDB builder
@@ -45,7 +49,9 @@ static void build_corner_pdb(const std::string& out_path) {
     uint8_t  max_depth = 0;
 
     while (!bfs.empty()) {
-        auto [s, d] = bfs.front(); bfs.pop();
+        Node nd = bfs.front(); bfs.pop();
+        const CubeState& s = nd.s;
+        const uint8_t    d = nd.depth;
         if (d > max_depth) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
             std::cout << "  depth " << static_cast<int>(d) << "  visited=" << visited
@@ -98,7 +104,9 @@ static void build_edge_pdb(const int* edge_set, int k,
     uint8_t  max_depth = 0;
 
     while (!bfs.empty()) {
-        auto [s, d] = bfs.front(); bfs.pop();
+        Node nd = bfs.front(); bfs.pop();
+        const CubeState& s = nd.s;
+        const uint8_t    d = nd.depth;
         if (d > max_depth) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - t0).count();
             std::cout << "  depth " << static_cast<int>(d) << "  visited=" << visited
@@ -134,8 +142,12 @@ int main(int argc, char* argv[]) {
         if (std::string(argv[i]) == "--out") out_dir = argv[i + 1];
     }
 
-    // Ensure output directory exists
-    std::filesystem::create_directories(out_dir);
+    // Ensure output directory exists (no-op if already present)
+#ifdef _WIN32
+    _mkdir(out_dir.c_str());
+#else
+    mkdir(out_dir.c_str(), 0755);
+#endif
 
     auto path = [&](const std::string& name) {
         return out_dir + "/" + name;

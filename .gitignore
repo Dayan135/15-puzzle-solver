@@ -1,0 +1,30 @@
+# Build directories
+build/
+**/build/
+
+# Compiled binaries
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.out
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Generated pattern databases (live on D:\Search_DB, never in the repo)
+*.pdb
+*.bin
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
