@@ -18,9 +18,11 @@ cmake_install.cmake
 Makefile
 *.cmake
 
-# Generated pattern databases (live on D:\Search_DB, never in the repo)
+# Generated pattern databases and datasets — never in the repo
 *.pdb
 *.bin
+phase1_data_generation/data/
+phase1_data_generation/jobs/logs/
 
 # Editor / OS
 .vscode/
