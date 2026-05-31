@@ -9,7 +9,7 @@ by Phase 2 (neural network training).
 ## Architecture
 
 Two executables:
-- `build_pdbs` — one-shot additive PDB generator (skeleton; see next step below).
+- `build_pdbs` — one-shot additive PDB generator (retrograde blank-aware 0-1 BFS).
 - `generate_data` — main pipeline; runs IDA* with the additive 7-8 `SumHeuristic`, generating stratified `[state, cost]` pairs and reporting per-bucket solve time and mean cost.
 
 ```
@@ -59,7 +59,7 @@ DFS — the hot loop never rescans.
 `scramble(GOAL, n_moves, rng)` applies valid random slides, never immediately reversing the prior
 move. **Never use a random nibble permutation** — ~50% of those are unsolvable.
 
-### Additive PDBs — 7-8 split (next step)
+### Additive PDBs — 7-8 split
 Group A = {1..7}, Group B = {8..15}. Because the groups are **disjoint** and each slide moves
 exactly one tile, the two PDB costs cover disjoint move sets and can be **summed** (admissible).
 This is fundamentally different from Rubik's PDBs, where overlapping cubies force a `max`.
