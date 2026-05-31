@@ -28,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -46,6 +47,13 @@ const std::vector<int> DEFAULT_BUCKETS = {
     1, 2, 3, 4, 5, 6, 7, 8,
     10, 12, 15, 18, 22, 27, 33, 40,
     50, 65, 85, 110, 200, 1000
+};
+
+// A scrambled state plus the index of the bucket it came from, so workers can
+// attribute solve time back to the scramble-length bucket.
+struct WorkItem {
+    State s      = 0;
+    int   bucket = 0;
 };
 
 struct Args {
@@ -111,7 +119,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    BlockingQueue<State>        work_q(args.queue_cap);
+    BlockingQueue<WorkItem>     work_q(args.queue_cap);
     BlockingQueue<SolvedRecord> result_q(args.queue_cap);
 
     AsyncWriter writer(args.out_dir);
@@ -120,17 +128,34 @@ int main(int argc, char** argv) {
     std::atomic<uint64_t> solved{0};
     std::atomic<int>      finished{0};
     const int             n = args.threads;
+    const int             B = static_cast<int>(args.buckets.size());
+
+    // Per-thread, per-bucket accumulators (each worker writes only its own row,
+    // so no locking; merged after join).  Tracks count, total solve time, and
+    // total optimal cost per scramble-length bucket.
+    std::vector<std::vector<uint64_t>> th_cnt (n, std::vector<uint64_t>(B, 0));
+    std::vector<std::vector<uint64_t>> th_ns  (n, std::vector<uint64_t>(B, 0));
+    std::vector<std::vector<uint64_t>> th_cost(n, std::vector<uint64_t>(B, 0));
 
     // --- worker pool ---
     std::vector<std::thread> workers;
     workers.reserve(n);
     for (int w = 0; w < n; ++w) {
-        workers.emplace_back([&] {
+        workers.emplace_back([&, w] {
             IDAStar<SumHeuristic> solver(heur);
-            State s;
-            while (work_q.pop(s)) {
-                const int cost = solver.solve(s);
-                result_q.push(SolvedRecord{s, static_cast<uint8_t>(cost)});
+            auto& cnt = th_cnt[w];
+            auto& ns  = th_ns[w];
+            auto& cst = th_cost[w];
+            WorkItem it;
+            while (work_q.pop(it)) {
+                const auto a   = std::chrono::steady_clock::now();
+                const int  cost = solver.solve(it.s);
+                const auto b   = std::chrono::steady_clock::now();
+                cnt[it.bucket] += 1;
+                ns [it.bucket] += static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count());
+                cst[it.bucket] += static_cast<uint64_t>(cost);
+                result_q.push(SolvedRecord{it.s, static_cast<uint8_t>(cost)});
                 solved.fetch_add(1, std::memory_order_relaxed);
             }
             // Last worker out closes the result stream so the writer can drain.
@@ -157,7 +182,7 @@ int main(int argc, char** argv) {
         any = false;
         for (std::size_t i = 0; i < args.buckets.size(); ++i) {
             if (remaining[i] == 0) continue;
-            work_q.push(scramble(GOAL, args.buckets[i], rng));
+            work_q.push(WorkItem{scramble(GOAL, args.buckets[i], rng), static_cast<int>(i)});
             --remaining[i];
             any = true;
             if (++queued % 100000 == 0)
@@ -174,5 +199,18 @@ int main(int argc, char** argv) {
     std::cout << "[gen] done: " << writer.records_written() << " records in "
               << secs << "s ("
               << (secs > 0 ? writer.records_written() / secs : 0) << " states/s)\n";
+
+    // --- per-bucket timing report (merge thread-local accumulators) ---
+    std::printf("[gen] per-bucket stats:\n");
+    std::printf("  %-7s %-9s %-9s %-12s %-10s\n",
+                "bucket", "scramble", "count", "mean_solve", "mean_cost");
+    for (int b = 0; b < B; ++b) {
+        uint64_t c = 0, ns = 0, cost = 0;
+        for (int w = 0; w < n; ++w) { c += th_cnt[w][b]; ns += th_ns[w][b]; cost += th_cost[w][b]; }
+        const double mean_ms   = c ? static_cast<double>(ns) / c / 1e6 : 0.0;
+        const double mean_cost = c ? static_cast<double>(cost) / c     : 0.0;
+        std::printf("  %-7d %-9d %-9llu %9.3f ms %9.2f\n",
+                    b, args.buckets[b], static_cast<unsigned long long>(c), mean_ms, mean_cost);
+    }
     return 0;
 }
