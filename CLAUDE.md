@@ -79,6 +79,14 @@ def read_dataset(path):
 
 | Phase | Status         | Notes                                                   |
 |-------|----------------|---------------------------------------------------------|
-| 1     | In progress    | Skeleton complete; additive PDB builder is the next step |
-| 2     | Not started    | Awaiting Phase 1 dataset                                |
+| 1     | ✅ Complete     | 100M `[state, cost]` pairs generated on the cluster (job 17947513, 2026-05-31). Additive 7-8 PDBs + IDA* + stratified buckets. Output: `data/full/dataset_000.bin` (900 MB) on the cluster. |
+| 2     | Not started    | Awaiting model design. Dataset ready; dedup shallow states + cost-balanced sampling at train time. |
 | 3     | Not started    | Awaiting Phase 2 trained model                          |
+
+### Phase 1 dataset (cluster)
+
+- **Location**: `phase1_data_generation/data/full/dataset_000.bin` on `slurm.bgu.ac.il` (gitignored; not in repo).
+- **Size**: 100,000,000 records, 900,000,016 bytes (header verified `n_records=100M`).
+- **PDBs**: `data/pdbs/{pdb_a.bin (55 MB), pdb_b.bin (495 MB)}` — built once (job 17947419), reused.
+- **Distribution**: stratified across 22 scramble-length buckets (~4.5M each), mean cost spanning 1 → 52.55.
+- **Caveat for Phase 2**: shallow buckets are heavily duplicated (few distinct states near the goal); dedup before training and rebalance cost coverage with a sampler/loss weights rather than on disk.

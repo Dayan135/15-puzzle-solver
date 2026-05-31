@@ -10,7 +10,7 @@ by Phase 2 (neural network training).
 
 Two executables:
 - `build_pdbs` — one-shot additive PDB generator (skeleton; see next step below).
-- `generate_data` — main pipeline; currently runs on the Manhattan heuristic placeholder.
+- `generate_data` — main pipeline; runs IDA* with the additive 7-8 `SumHeuristic`, generating stratified `[state, cost]` pairs and reporting per-bucket solve time and mean cost.
 
 ```
 main thread (generator)
@@ -29,14 +29,12 @@ main thread (generator)
 
 | Heuristic         | Status          | Notes                                              |
 |-------------------|-----------------|----------------------------------------------------|
-| Manhattan         | ✅ Working       | Placeholder; weak on deep states, but **correct**  |
-| Additive 7-8 PDBs | 🔲 Next step     | Builder skeleton in `pdb_builder.cpp`; swap is one line in `main.cpp` |
+| Additive 7-8 PDBs | ✅ In use        | `SumHeuristic` over disjoint groups {1..7}+{8..15}; production heuristic. |
+| Manhattan         | ✅ Available     | `ManhattanHeuristic` kept as a no-setup fallback; not used by `generate_data`. |
 
-Swapping heuristics is a **one-line change** — `IDAStar` is templated on `H`:
-```cpp
-// Now:   IDAStar<ManhattanHeuristic> solver(heur);
-// After: IDAStar<SumHeuristic>       solver(heur);
-```
+`IDAStar` is templated on `H`, so the heuristic is a one-line swap
+(`IDAStar<SumHeuristic>` in `main.cpp`). The PDBs are built once by
+`build_pdbs` and loaded read-only, shared across all worker threads.
 
 ## Toolchain
 
@@ -98,17 +96,21 @@ cmake --build build -j
 # correctness test (always run first)
 ./build/verify_state
 
-# (future) build PDBs once, ~hours, needs ~4 GB RAM for group B
-./build/build_pdbs --out /path/to/db/
+# build the additive 7-8 PDBs once (~30 min on the cluster, ~4 GB RAM for group B)
+./build/build_pdbs --out ./data/pdbs
 
-# generate dataset
+# generate a stratified dataset (equal quota across scramble-length buckets)
 ./build/generate_data \
-    --threads 14 \
-    --target 10000000 \
-    --scramble 1000 \
-    --out-dir /path/to/output/ \
+    --threads 16 \
+    --target 100000000 \
+    --pdb-dir ./data/pdbs \
+    --out-dir ./data/full \
     --seed 42
+# optional: --buckets "1,5,10,30,100,1000" to override the default 22 buckets
 ```
+
+On the cluster, submit via the job scripts in `jobs/` (`puzzle_pdbs_*.sh` then
+`puzzle_full_*.sh`); both skip the PDB build if `data/pdbs/` is already populated.
 
 ## File Map
 
