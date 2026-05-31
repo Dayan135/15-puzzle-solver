@@ -36,7 +36,7 @@ echo "[job] pdbs ready"
 mkdir -p ./data/full
 ./build/generate_data \
     --threads  "$SLURM_CPUS_PER_TASK" \
-    --target   10000000 \
+    --target   100000000 \
     --pdb-dir  ./data/pdbs \
     --out-dir  ./data/full \
     --seed     "$SLURM_JOB_ID"
