@@ -55,6 +55,21 @@ Likely a fully-connected residual network:
 
 A saved model checkpoint (`.pt`) loadable by Phase 3's search harness.
 
+## State Encoding Decision
+
+**One-hot per cell, 256-dim float32.** Each of the 16 cells gets a 16-element one-hot
+vector over tile values 0–15. Tile labels are categorical — feeding raw nibble values as
+floats imposes a spurious ordinal relationship (tile 12 > tile 3) that doesn't exist in
+the puzzle. One-hot removes that bias.
+
+## Dataset balance
+
+Shallow scramble buckets produce very few *distinct* states (~859 total for depth 1–8)
+but ~36M records. Rather than deduplicating the 900 MB file, we use a
+**`WeightedRandomSampler`** (weight = 1/count per cost value) so each cost level has equal
+expected representation per batch. Duplicates become irrelevant at zero memory cost.
+
 ## Status
 
-Not started — awaiting Phase 1 dataset.
+In progress — dataset/dataloader class complete (`data/puzzle_dataset.py`).
+Next: model architecture and training loop.
