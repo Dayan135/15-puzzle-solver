@@ -24,16 +24,24 @@ def read_dataset(path):
             yield state, cost
 ```
 
-## State Encoding Options
+## State Encoding — one-hot per cell (256-dim) — DECIDED
 
-The raw `uint64_t` state (16 nibbles) needs to be converted to a network input.
+The raw `uint64_t` state (16 nibbles) is encoded as **16 cells × 16-way one-hot
+= 256 floats** (exactly 16 ones). Input `x` is one-hot; the **label is not** —
+cost is a scalar regression target, normalised `cost / 80`.
 
-| Encoding            | Size      | Notes                                                  |
-|---------------------|-----------|--------------------------------------------------------|
-| One-hot per cell    | 16 × 16 = 256 bits | One-hot over 16 possible tiles per cell      |
-| Raw nibbles         | 16 × 4 bits | Compact; requires the model to learn tile semantics  |
+**Why not feed the number directly?** Three options, only the last is sound:
 
-Decision to be made at the start of Phase 2.
+| Option | Problem |
+|--------|---------|
+| Raw `uint64` as one float | ~10¹⁹ magnitude saturates the net; bit position ≠ magnitude (swapping two tiles changes the integer by ~10¹⁸ but is just one slide). The net would have to decode 64 packed bits from one number. |
+| 16 nibbles as 16 ints (0–15) | Imposes a **false ordering**: the net reads "tile 12 > tile 3", "tile 11 ≈ tile 12". But tile labels are arbitrary *names*, not quantities — wasted capacity fighting structure that doesn't exist. |
+| **One-hot per cell (256)** ✅ | No magnitude, no ordering. Each (cell, tile) pair is a clean binary "is tile T in cell C?". All tiles equidistant, as they should be. |
+
+Tiles are **categorical**, like `{red, green, blue}` → never feed `{0,1,2}`
+(implies green is "between" red and blue). Same reasoning AlphaZero-style nets
+use one channel per piece type. The extra width (256 vs 16) is trivially cheap
+(~1 KB/sample, computed on the fly) and makes the learning problem far easier.
 
 ## Model Architecture (TBD)
 
@@ -55,21 +63,19 @@ Likely a fully-connected residual network:
 
 A saved model checkpoint (`.pt`) loadable by Phase 3's search harness.
 
-## State Encoding Decision
-
-**One-hot per cell, 256-dim float32.** Each of the 16 cells gets a 16-element one-hot
-vector over tile values 0–15. Tile labels are categorical — feeding raw nibble values as
-floats imposes a spurious ordinal relationship (tile 12 > tile 3) that doesn't exist in
-the puzzle. One-hot removes that bias.
-
 ## Dataset balance
 
-Shallow scramble buckets produce very few *distinct* states (~859 total for depth 1–8)
-but ~36M records. Rather than deduplicating the 900 MB file, we use a
-**`WeightedRandomSampler`** (weight = 1/count per cost value) so each cost level has equal
-expected representation per batch. Duplicates become irrelevant at zero memory cost.
+The real 100M dataset is only **42.1% distinct** — shallow scramble buckets repeat a
+handful of near-goal states millions of times (depth 1 has only a couple of distinct
+states but ~4.5M records). Rather than deduplicating the 900 MB file, `CostBalancedSampler`
+draws a cost uniformly then a record of that cost uniformly — equivalent to weighting each
+record by 1/count(cost), so duplicates carry no statistical weight at zero memory cost.
+
+> Note: torch's `WeightedRandomSampler` was tried first but its multinomial backend caps
+> at 2²⁴ (~16.7M) categories and crashed on 100M records; `CostBalancedSampler` (same math,
+> vectorised group-by-cost) has no such cap. See `TEST_RESULTS.md`.
 
 ## Status
 
-In progress — dataset/dataloader class complete (`data/puzzle_dataset.py`).
-Next: model architecture and training loop.
+In progress — dataset/dataloader complete and validated on the full 100M dataset
+(`data/puzzle_dataset.py`, `TEST_RESULTS.md`). Next: model architecture and training loop.
