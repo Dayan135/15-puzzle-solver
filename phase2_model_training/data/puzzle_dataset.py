@@ -4,7 +4,7 @@ from typing import Sequence, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, Subset, WeightedRandomSampler
+from torch.utils.data import Dataset, Sampler, Subset
 
 MAGIC    = 0x50313544          # "P15D"
 MAX_COST = 80                  # theoretical 15-puzzle maximum
@@ -89,25 +89,55 @@ class PuzzleDataset(Dataset):
         return [Path(p) for p in paths]
 
 
-def cost_balanced_sampler(dataset: PuzzleDataset) -> WeightedRandomSampler:
+class CostBalancedSampler(Sampler):
     """
-    WeightedRandomSampler that gives each cost value equal expected frequency.
+    Sampler that draws each cost value with equal expected frequency: pick a
+    present cost uniformly at random, then a record with that cost uniformly.
 
-    Shallow buckets in Phase 1 are heavily duplicated (e.g. depth-1 has only
-    2 distinct states but ~4.5M records). Rather than dedup-and-reload 900 MB,
-    we assign weight = 1 / count(records at same cost) per record. A depth-1
-    record with weight 1/4_500_000 is sampled as rarely as any single depth-52
-    record, so duplicates have no effect on the effective training distribution.
+    This is mathematically identical to weighting each record by
+    1 / count(records at same cost), but avoids torch's WeightedRandomSampler,
+    whose multinomial backend caps at 2**24 (~16.7M) categories — our dataset
+    has 100M records, which overflows that cap.
+
+    Shallow buckets in Phase 1 are heavily duplicated (e.g. depth-1 has only a
+    couple of distinct states but ~4.5M records); grouping by cost makes those
+    duplicates irrelevant to the effective training distribution at zero memory
+    cost (only per-cost index lists are stored).
 
     Usage:
-        loader = DataLoader(ds, batch_size=B, sampler=cost_balanced_sampler(ds))
+        loader = DataLoader(ds, batch_size=B, sampler=CostBalancedSampler(ds))
     Do NOT pass shuffle=True alongside a sampler.
     """
-    costs  = dataset.costs.astype(np.int32)
-    counts = np.bincount(costs, minlength=MAX_COST + 1).astype(np.float64)
-    inv    = np.divide(1.0, counts, out=np.zeros_like(counts), where=counts > 0)
-    w      = torch.from_numpy(inv[costs]).float()
-    return WeightedRandomSampler(w, num_samples=len(dataset), replacement=True)
+
+    def __init__(self, dataset: PuzzleDataset, num_samples: int = None, seed: int = None):
+        costs = dataset.costs.astype(np.int64)
+        # Group dataset indices by cost, stored as one flat array + per-group
+        # (start, size) so sampling is fully vectorised (no Python per-item loop).
+        order = np.argsort(costs, kind="stable")          # indices sorted by cost
+        sorted_costs = costs[order]
+        bounds = np.searchsorted(sorted_costs, np.arange(MAX_COST + 2))
+        present = [c for c in range(MAX_COST + 1) if bounds[c + 1] > bounds[c]]
+        self._flat   = order
+        self._starts = np.array([bounds[c]     for c in present], dtype=np.int64)
+        self._sizes  = np.array([bounds[c + 1] - bounds[c] for c in present], dtype=np.int64)
+        self._num_samples = num_samples if num_samples is not None else len(dataset)
+        self._seed = seed
+
+    def __len__(self) -> int:
+        return self._num_samples
+
+    def __iter__(self):
+        rng = np.random.default_rng(self._seed)
+        n_groups = len(self._sizes)
+        g       = rng.integers(0, n_groups, size=self._num_samples)        # uniform over costs
+        within  = (rng.random(self._num_samples) * self._sizes[g]).astype(np.int64)
+        picks   = self._flat[self._starts[g] + within]
+        yield from picks.tolist()
+
+
+def cost_balanced_sampler(dataset: PuzzleDataset, **kwargs) -> CostBalancedSampler:
+    """Convenience factory; see CostBalancedSampler."""
+    return CostBalancedSampler(dataset, **kwargs)
 
 
 def train_val_test_split(
