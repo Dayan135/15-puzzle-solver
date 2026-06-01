@@ -105,7 +105,7 @@ def cost_balanced_sampler(dataset: PuzzleDataset) -> WeightedRandomSampler:
     """
     costs  = dataset.costs.astype(np.int32)
     counts = np.bincount(costs, minlength=MAX_COST + 1).astype(np.float64)
-    inv    = np.where(counts > 0, 1.0 / counts, 0.0)
+    inv    = np.divide(1.0, counts, out=np.zeros_like(counts), where=counts > 0)
     w      = torch.from_numpy(inv[costs]).float()
     return WeightedRandomSampler(w, num_samples=len(dataset), replacement=True)
 
