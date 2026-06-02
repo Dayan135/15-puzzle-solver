@@ -24,9 +24,24 @@ Makefile
 phase1_data_generation/data/
 phase1_data_generation/jobs/logs/
 
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
 # Editor / OS
 .vscode/
 .idea/
 *.swp
 .DS_Store
 Thumbs.db
+.venv/
+venv/
+
+# Phase 2 model weights — too large for git
+phase2_model_training/checkpoints/**/*.pt
+
+# Phase 2 generated outputs — reproducible from checkpoints
+phase2_model_training/results/**/*.png
+phase2_model_training/results/**/*.json
