@@ -1,0 +1,23 @@
+# ── Phase 2 · Classifier training config ──────────────────────────────────────
+# Run:  python train.py --config configs/classifier.yaml
+#       python train.py --config configs/classifier.yaml --epochs 30  # CLI overrides
+
+model: classifier
+data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
+
+# Training
+epochs: 20
+batch_size: 1024
+lr: 0.001
+seed: 42
+num_workers: 4
+
+# Checkpointing
+out: checkpoints
+snapshot_every: 5
+
+# Results (plots + test_metrics.json)
+results: results
+
+# tau is ignored for the classifier (pinball loss is regressor-only)
+tau: 0.3

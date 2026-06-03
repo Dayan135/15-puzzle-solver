@@ -1,0 +1,24 @@
+# ── Phase 2 · Regressor training config ───────────────────────────────────────
+# Run:  python train.py --config configs/regressor.yaml
+#       python train.py --config configs/regressor.yaml --tau 0.2  # CLI overrides
+
+model: regressor
+data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
+
+# Training
+epochs: 20
+batch_size: 1024
+lr: 0.001
+seed: 42
+num_workers: 4
+
+# Pinball loss quantile: τ < 0.5 → overestimation penalized more than underestimation.
+# τ=0.3 → model learns the 30th percentile (~70% of predictions ≤ true cost).
+tau: 0.3
+
+# Checkpointing
+out: checkpoints
+snapshot_every: 5
+
+# Results (plots + test_metrics.json)
+results: results
