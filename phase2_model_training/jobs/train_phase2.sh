@@ -20,7 +20,7 @@
 #SBATCH --gres=gpu:rtx_3090:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=20:00:00
 #SBATCH --output=jobs/logs/%j.out
@@ -54,6 +54,6 @@ echo "[job] config=$CONFIG  epochs=$EPOCHS"
 python train.py \
   --config      "$CONFIG" \
   ${EPOCHS:+--epochs "$EPOCHS"} \
-  --num-workers 4
+  --num-workers 8
 
 echo "[job] done $(date)"

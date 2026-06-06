@@ -9,27 +9,26 @@ from torch.utils.data import Dataset, Sampler, Subset
 MAGIC    = 0x50313544          # "P15D"
 MAX_COST = 80                  # theoretical 15-puzzle maximum
 _HEADER  = struct.Struct("<IIQ")   # magic(4) + version(4) + n_records(8)
-_RECORD  = struct.Struct("<QB")    # state(8) + cost(1)
-_CHUNK   = 1 << 16                 # 65536 records per read pass
+
+# Module-level constants reused in every __getitem__ call (allocated once).
+_SHIFTS       = np.arange(16, dtype=np.uint64) * np.uint64(4)  # bit-shift amounts per cell
+_CELL_OFFSETS = np.arange(16, dtype=np.int32)  * 16             # one-hot base index per cell
 
 
 def _read_bin(path: Path) -> Tuple[np.ndarray, np.ndarray]:
-    """Load one .bin file. Returns (states uint64[N], costs uint8[N])."""
+    """Load one .bin file. Returns (states uint64[N], costs uint8[N]).
+
+    Reads the entire file in one syscall and extracts fields with numpy,
+    avoiding a Python loop over every record.
+    """
     with open(path, "rb") as f:
         magic, _ver, n = _HEADER.unpack(f.read(16))
         if magic != MAGIC:
             raise ValueError(f"{path}: bad magic 0x{magic:08X}")
-        states = np.empty(n, dtype=np.uint64)
-        costs  = np.empty(n, dtype=np.uint8)
-        done   = 0
-        while done < n:
-            batch = min(_CHUNK, n - done)
-            raw   = f.read(batch * 9)
-            for i in range(batch):
-                s, c = _RECORD.unpack_from(raw, i * 9)
-                states[done + i] = s
-                costs [done + i] = c
-            done += batch
+        raw = np.frombuffer(f.read(n * 9), dtype=np.uint8).reshape(n, 9)
+    # Records are packed (no padding): 8 bytes state (LE uint64) + 1 byte cost.
+    states = np.frombuffer(np.ascontiguousarray(raw[:, :8]).tobytes(), dtype="<u8").copy()
+    costs  = np.ascontiguousarray(raw[:, 8])
     return states, costs
 
 
@@ -58,28 +57,26 @@ class PuzzleDataset(Dataset):
         self.states         = np.concatenate(all_states)   # uint64[N]
         self.costs          = np.concatenate(all_costs)    # uint8[N]
         self.normalize_cost = normalize_cost
+        # Pre-decode nibbles once: [N, 16] uint8.  Eliminates bit-ops inside
+        # __getitem__, which is called ~78M times per epoch by DataLoader workers.
+        # Memory cost: N×16 bytes (~1.6 GB for 100M records, well within 32 GB).
+        self.nibbles = (
+            (self.states[:, None] >> _SHIFTS) & np.uint64(0xF)
+        ).astype(np.uint8)   # [N, 16] uint8
 
     def __len__(self) -> int:
         return len(self.states)
 
     def __getitem__(self, idx: int):
-        state = int(self.states[idx])
-        cost  = int(self.costs[idx])
-
         # One-hot: 16 cells × 16 possible tiles = 256-dim float32.
-        # Tile labels are categorical — feeding raw nibble values as floats
-        # would impose an ordinal relationship (tile 12 > tile 3) that
-        # doesn't exist in the puzzle.
-        x = torch.zeros(256, dtype=torch.float32)
-        for cell in range(16):
-            tile = (state >> (cell * 4)) & 0xF
-            x[cell * 16 + tile] = 1.0
+        # Tile labels are categorical — ordinal encoding would impose a false
+        # ordering (tile 12 > tile 3) that doesn't exist in the puzzle.
+        x = np.zeros(256, dtype=np.float32)
+        x[_CELL_OFFSETS + self.nibbles[idx]] = 1.0   # vectorised; no Python loop
 
-        y = torch.tensor(
-            cost / MAX_COST if self.normalize_cost else float(cost),
-            dtype=torch.float32,
-        )
-        return x, y
+        cost = float(self.costs[idx])
+        y    = cost / MAX_COST if self.normalize_cost else cost
+        return torch.from_numpy(x), torch.tensor(y, dtype=torch.float32)
 
     @staticmethod
     def _resolve_paths(paths) -> "list[Path]":
@@ -181,8 +178,11 @@ def train_val_test_split(
     record_ranks = np.searchsorted(unique_states, states)     # O(N log n_uniq)
     train_idx = np.where(is_train_uniq[record_ranks])[0]
 
+    # Pass numpy arrays directly — Subset accepts any sequence and numpy int64
+    # works as an index into PuzzleDataset.  Avoids creating three Python lists
+    # totalling ~80M elements (which would allocate ~2 GB of extra memory).
     return (
-        Subset(dataset, train_idx.tolist()),
-        Subset(dataset, val_idx.tolist()),
-        Subset(dataset, test_idx.tolist()),
+        Subset(dataset, train_idx),
+        Subset(dataset, val_idx),
+        Subset(dataset, test_idx),
     )
