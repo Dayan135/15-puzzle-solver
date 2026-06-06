@@ -6,7 +6,7 @@ model: regressor
 data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
 
 # Training
-epochs: 20
+epochs: 10
 batch_size: 1024
 lr: 0.001
 seed: 42

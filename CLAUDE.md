@@ -80,7 +80,7 @@ def read_dataset(path):
 | Phase | Status         | Notes                                                   |
 |-------|----------------|---------------------------------------------------------|
 | 1     | ✅ Complete     | 100M `[state, cost]` pairs generated on the cluster (job 17947513, 2026-05-31). Additive 7-8 PDBs + IDA* + stratified buckets. Output: `data/full/dataset_000.bin` (900 MB) on the cluster. |
-| 2     | Not started    | Awaiting model design. Dataset ready; dedup shallow states + cost-balanced sampling at train time. |
+| 2     | In progress    | Data pipeline complete. Dedup-aware split prevents val/test leakage; `CostBalancedSampler` flattens training cost distribution. Classifier uses CDF quantile inference (`predict_quantile`). Run 1 invalid (CPU-only nodes + data bug now fixed). Run 2 ready to submit. |
 | 3     | Not started    | Awaiting Phase 2 trained model                          |
 
 ### Phase 1 dataset (cluster)
@@ -89,4 +89,6 @@ def read_dataset(path):
 - **Size**: 100,000,000 records, 900,000,016 bytes (header verified `n_records=100M`).
 - **PDBs**: `data/pdbs/{pdb_a.bin (55 MB), pdb_b.bin (495 MB)}` — built once (job 17947419), reused.
 - **Distribution**: stratified across 22 scramble-length buckets (~4.5M each), mean cost spanning 1 → 52.55.
-- **Caveat for Phase 2**: shallow buckets are heavily duplicated (few distinct states near the goal); dedup before training and rebalance cost coverage with a sampler/loss weights rather than on disk.
+- **Duplicate handling for Phase 2**: 100M records are only ~42% distinct — shallow buckets repeat a few near-goal states millions of times. Two mechanisms work together:
+  - `train_val_test_split` partitions on *unique states* (not records): val/test receive exactly one record per unique state, so no training state leaks into evaluation.
+  - `CostBalancedSampler` draws each cost value with equal probability during training, making duplicate shallow records statistically weightless. Train retains all duplicate records (they help the sampler cover low-cost values).

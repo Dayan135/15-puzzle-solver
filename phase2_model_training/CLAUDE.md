@@ -9,7 +9,7 @@ Two model variants are trained independently and compared:
 
 | Variant | Output | Loss | Admissibility strategy |
 |---------|--------|------|------------------------|
-| `PuzzleClassifier` | P(cost = k), k ∈ {0..80} | CrossEntropyLoss | argmax at inference (most-likely cost) |
+| `PuzzleClassifier` | P(cost = k), k ∈ {0..80} | CrossEntropyLoss | CDF quantile at inference (tunable threshold) |
 | `PuzzleRegressor` | scalar cost estimate | PinballLoss (τ=0.3) | overestimation penalized 2.3× heavier |
 
 The learned heuristics are intentionally **non-admissible by default** — studying how
@@ -75,7 +75,14 @@ of duplicates in shallow scramble buckets.
 
 #### `train_val_test_split`
 - `train_val_test_split(dataset, fractions=(0.8, 0.1, 0.1), seed=42)` → `(train, val, test)`
-  as `torch.utils.data.Subset` objects. Reproducible, disjoint, exhaustive.
+  as `torch.utils.data.Subset` objects. **Splits on unique states, not records**, preventing
+  data leakage:
+  - **val/test**: exactly one record per unique state (first occurrence); fractions apply to
+    the ~42M unique states, so val and test are each ~4.2M clean, non-overlapping records.
+  - **train**: all records whose state falls in the train bucket, duplicates included;
+    `CostBalancedSampler` then makes those duplicates statistically weightless.
+  - `len(train) + len(val) + len(test)` < `len(dataset)` — duplicate records of val/test
+    states are intentionally dropped (they are not needed for evaluation).
 
 ---
 
@@ -88,6 +95,15 @@ Residual FC network predicting a probability distribution over 81 cost classes.
   Linear(width→81). **614,993 parameters** at defaults.
 - `forward(x)` → logits `[B, 81]`. Use with `nn.CrossEntropyLoss`.
 - `predict(x)` → int tensor `[B]`, argmax over logits (no_grad).
+- `predict_quantile(x, threshold=0.5)` → int tensor `[B]` (no_grad). Returns the smallest
+  cost class `k` such that `P(cost ≤ k) ≥ threshold`. Eliminates catastrophic tail
+  overestimates (e.g. the 42-move outlier from run 1's argmax) and gives a tunable
+  admissibility dial without retraining. Output is clamped to [0, 80] to handle float32
+  CDF imprecision at threshold=1.0. Training is unchanged — CrossEntropyLoss stays.
+
+  **Important:** `threshold` ≠ admissibility rate. CrossEntropyLoss produces uncalibrated
+  probabilities. Find the correct threshold empirically by sweeping on the val set and
+  picking the floor that achieves ≥ 99% admissibility.
 
 #### `_ResBlock` (private)
 Single residual block: `fc1→ReLU→fc2 + skip connection → LayerNorm`.
@@ -130,10 +146,11 @@ Single CLI script that trains either model.
 python train.py --model {classifier,regressor} --data <dir> [options]
 
 Options:
-  --epochs         int    default 20
+  --epochs         int    default 20 (YAML overrides: classifier=14, regressor=10)
   --batch-size     int    default 1024
   --lr             float  default 1e-3  (AdamW, weight_decay=1e-4)
   --tau            float  default 0.3   (regressor only)
+  --cdf-threshold  float  default None  (classifier only; None = argmax, set to sweep admissibility)
   --out            str    default checkpoints/
   --seed           int    default 42
   --num-workers    int    default 4
@@ -175,8 +192,15 @@ Raw `uint64_t` state → **16 cells × 16-way one-hot = 256 floats** (exactly 16
 ## Dataset Balance
 
 100M records are only **42.1% distinct** — shallow buckets repeat a few near-goal states
-millions of times. `CostBalancedSampler` makes duplicates statistically weightless at zero
-memory cost (no deduplication on disk). See `TEST_RESULTS.md`.
+millions of times. Two mechanisms handle this:
+
+1. **`train_val_test_split`** partitions on *unique states* so the same state never appears
+   in both train and val/test. Val and test each hold one record per unique state, giving
+   clean, leak-free evaluation.
+2. **`CostBalancedSampler`** makes duplicates statistically weightless during training by
+   drawing each cost value with equal probability, at zero memory cost (no on-disk dedup).
+
+See `TEST_RESULTS.md`.
 
 ## Output
 
@@ -195,9 +219,12 @@ model.eval()
 # local (no GPU — use synthetic data for smoke test)
 python train.py --model classifier --data <dir> --epochs 2
 
-# cluster (submit separate jobs for each model)
-MODEL=classifier sbatch jobs/train_phase2.sh
-MODEL=regressor  sbatch jobs/train_phase2.sh
+# cluster (submit separate jobs for each model; epoch count comes from configs/*.yaml)
+MODEL=classifier sbatch jobs/train_phase2.sh           # 14 epochs, cdf_threshold=0.5
+MODEL=regressor  sbatch jobs/train_phase2.sh           # 10 epochs
+
+# override epochs at submission time
+MODEL=classifier EPOCHS=20 sbatch jobs/train_phase2.sh
 
 # tests
 pytest tests/test_model.py -v
@@ -205,14 +232,18 @@ pytest tests/test_dataset.py -v                        # synthetic only
 pytest tests/test_dataset.py -v --data <path/to/data> # real 100M dataset
 ```
 
+The SLURM job (`jobs/train_phase2.sh`) aborts immediately if no GPU is detected on the
+allocated node (`nvidia-smi` check), preventing silent 9-hour CPU-only runs. Epoch count
+defaults to the value in `configs/{MODEL}.yaml`; pass `EPOCHS=N` to override.
+
 ## Status
 
 | Component | Status |
 |-----------|--------|
-| Dataset / dataloader | ✅ Complete — validated on 100M records |
-| `PuzzleClassifier` | ✅ Complete — 614,993 params |
+| Dataset / dataloader | ✅ Complete — validated on 100M records; unique-state split prevents val/test leakage |
+| `PuzzleClassifier` | ✅ Complete — 614,993 params; `predict_quantile` for CDF inference |
 | `PuzzleRegressor` | ✅ Complete — 594,433 params |
 | `PinballLoss` | ✅ Complete |
-| `train.py` | ✅ Complete |
-| Model training (cluster) | ⬜ Not started — submit `train_phase2.sh` |
+| `train.py` | ✅ Complete — `--cdf-threshold` supported for classifier val/test metrics |
+| Model training (cluster) | 🔄 Run 1 invalid (val/test contamination, CPU-only nodes). Run 2 ready to submit. |
 | Phase 3 integration | ⬜ Awaiting trained checkpoints |

@@ -42,3 +42,14 @@ class PuzzleClassifier(nn.Module):
     def predict(self, x: torch.Tensor) -> torch.Tensor:
         """Returns predicted cost as int tensor [B] (argmax over class logits)."""
         return self.forward(x).argmax(dim=-1)
+
+    @torch.no_grad()
+    def predict_quantile(self, x: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
+        """Returns the smallest k such that P(cost ≤ k) ≥ threshold.
+
+        Unlike predict(), this uses the full CDF rather than the mode, which
+        eliminates catastrophic tail overestimates and gives a tunable
+        admissibility dial without retraining.  threshold=0.5 → median.
+        """
+        cdf = torch.softmax(self.forward(x), dim=-1).cumsum(dim=-1)   # [B, 81]
+        return (cdf < threshold).sum(dim=-1).clamp(max=80).long()     # [B]

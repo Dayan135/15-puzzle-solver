@@ -113,11 +113,19 @@ def test_synthetic():
 
         # --- split integrity ---
         tr, va, te = train_val_test_split(ds, seed=42)
-        assert len(tr) + len(va) + len(te) == len(ds)
-        # disjoint indices
-        allidx = set(tr.indices) | set(va.indices) | set(te.indices)
-        assert len(allidx) == len(ds), "splits overlap or miss indices"
-        print(f"split OK: train={len(tr):,} val={len(va):,} test={len(te):,} (disjoint, exhaustive)")
+        # val/test: one record per unique state, no duplicates within each
+        tr_states = ds.states[np.array(tr.indices)]
+        va_states = ds.states[np.array(va.indices)]
+        te_states = ds.states[np.array(te.indices)]
+        assert len(np.unique(va_states)) == len(va.indices), "val has duplicate states"
+        assert len(np.unique(te_states)) == len(te.indices), "test has duplicate states"
+        # zero state leakage between splits
+        assert not np.isin(va_states, tr_states).any(), "val/train state overlap"
+        assert not np.isin(te_states, tr_states).any(), "test/train state overlap"
+        assert not np.isin(va_states, te_states).any(), "val/test state overlap"
+        n_uniq = len(np.unique(ds.states))
+        print(f"split OK: train={len(tr):,} val={len(va):,} test={len(te):,} "
+              f"(unique states: {n_uniq:,}, no leakage)")
     print("synthetic test PASSED\n")
 
 

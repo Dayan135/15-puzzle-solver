@@ -146,16 +146,43 @@ def train_val_test_split(
     seed:      int = 42,
 ) -> Tuple[Subset, Subset, Subset]:
     """
-    Reproducible random split → (train, val, test) Subsets.
-    All three share the underlying PuzzleDataset; no data is copied.
+    Dedup-aware split → (train, val, test) Subsets.
+
+    Fractions apply to *unique states*, not records:
+      - val/test: exactly one record per unique state (first occurrence)
+      - train:    ALL records whose state falls in the train bucket,
+                  including duplicates (CostBalancedSampler handles them)
+
+    This prevents data leakage: a state seen during training never appears
+    in val or test, so metrics reflect generalisation, not memorisation.
     """
     assert abs(sum(fractions) - 1.0) < 1e-6
-    n    = len(dataset)
-    idx  = np.random.default_rng(seed).permutation(n)
-    n_tr = int(n * fractions[0])
-    n_va = int(n * fractions[1])
+
+    states = dataset.states                                   # uint64[N]
+    unique_states, first_idx = np.unique(states, return_index=True)
+    n_uniq = len(unique_states)
+
+    rng  = np.random.default_rng(seed)
+    perm = rng.permutation(n_uniq)
+    n_va = int(n_uniq * fractions[1])
+    n_te = int(n_uniq * fractions[2])
+
+    val_perm   = perm[:n_va]
+    test_perm  = perm[n_va:n_va + n_te]
+    train_perm = perm[n_va + n_te:]
+
+    # val/test: one index (first occurrence) per unique state
+    val_idx  = first_idx[val_perm]
+    test_idx = first_idx[test_perm]
+
+    # train: every record whose state maps to a train-bucket unique state
+    is_train_uniq = np.zeros(n_uniq, dtype=bool)
+    is_train_uniq[train_perm] = True
+    record_ranks = np.searchsorted(unique_states, states)     # O(N log n_uniq)
+    train_idx = np.where(is_train_uniq[record_ranks])[0]
+
     return (
-        Subset(dataset, idx[:n_tr].tolist()),
-        Subset(dataset, idx[n_tr:n_tr + n_va].tolist()),
-        Subset(dataset, idx[n_tr + n_va:].tolist()),
+        Subset(dataset, train_idx.tolist()),
+        Subset(dataset, val_idx.tolist()),
+        Subset(dataset, test_idx.tolist()),
     )
