@@ -6,7 +6,7 @@ model: classifier
 data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
 
 # Training
-epochs: 20
+epochs: 14
 batch_size: 1024
 lr: 0.001
 seed: 42
@@ -21,3 +21,8 @@ results: results
 
 # tau is ignored for the classifier (pinball loss is regressor-only)
 tau: 0.3
+
+# CDF quantile threshold for inference (None = argmax).
+# 0.5 = median; sweep on val set post-training to find the threshold that hits ≥ 99% admissibility.
+# Note: threshold ≠ admissibility rate — CrossEntropyLoss is uncalibrated.
+cdf_threshold: 0.5

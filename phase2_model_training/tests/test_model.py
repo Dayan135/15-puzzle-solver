@@ -97,3 +97,29 @@ def test_regressor_predict_shape_and_range():
     preds = PuzzleRegressor().predict(_rand_x())
     assert preds.shape == (BATCH,)
     assert preds.min() >= 0 and preds.max() <= 80
+
+
+# ── predict_quantile() API ─────────────────────────────────────────────────────
+
+def test_classifier_predict_quantile_shape_and_range():
+    preds = PuzzleClassifier().predict_quantile(_rand_x(), threshold=0.5)
+    assert preds.shape == (BATCH,), preds.shape
+    assert preds.dtype == torch.int64, preds.dtype
+    assert preds.min() >= 0 and preds.max() <= 80, preds
+
+
+def test_classifier_predict_quantile_monotone_in_threshold():
+    """Higher threshold → equal or higher predicted cost (more conservative)."""
+    model = PuzzleClassifier()
+    x     = _rand_x()
+    low   = model.predict_quantile(x, threshold=0.1).float().mean()
+    high  = model.predict_quantile(x, threshold=0.9).float().mean()
+    assert high >= low, f"threshold 0.9 mean ({high:.2f}) < threshold 0.1 mean ({low:.2f})"
+
+
+def test_classifier_predict_quantile_threshold_one_returns_max_cost():
+    """At threshold=1.0 every prediction must be 80 (CDF never exceeds 1.0 exactly,
+    so the count of classes with CDF < 1.0 equals 80)."""
+    model = PuzzleClassifier()
+    preds = model.predict_quantile(_rand_x(), threshold=1.0)
+    assert (preds == 80).all(), preds

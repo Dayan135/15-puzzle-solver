@@ -23,6 +23,7 @@ Makefile
 *.bin
 phase1_data_generation/data/
 phase1_data_generation/jobs/logs/
+phase2_model_training/jobs/logs/
 
 # Python bytecode
 __pycache__/
@@ -42,6 +43,7 @@ venv/
 # Phase 2 model weights — too large for git
 phase2_model_training/checkpoints/**/*.pt
 
-# Phase 2 generated outputs — reproducible from checkpoints
-phase2_model_training/results/**/*.png
-phase2_model_training/results/**/*.json
+# Phase 2 default training outputs — regenerated each run, not committed
+phase2_model_training/results/classifier/**
+phase2_model_training/results/regressor/**
+# Named run archives (e.g. classifier_run1/) are intentionally tracked

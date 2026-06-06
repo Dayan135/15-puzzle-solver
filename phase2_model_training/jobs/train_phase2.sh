@@ -22,14 +22,14 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=8:00:00
+#SBATCH --time=20:00:00
 #SBATCH --output=jobs/logs/%j.out
 #SBATCH --error=jobs/logs/%j.err
 
 set -euo pipefail
 
 MODEL="${MODEL:-classifier}"
-EPOCHS="${EPOCHS:-20}"
+EPOCHS="${EPOCHS:-}"   # empty = use YAML default (classifier=14, regressor=10)
 
 echo "[job] started $(date)  job_id=$SLURM_JOB_ID  node=$SLURMD_NODENAME  model=$MODEL"
 
@@ -39,6 +39,13 @@ source /storage/modules/packages/anaconda/etc/profile.d/conda.sh
 conda activate search
 echo "[job] python=$(which python)"
 
+# Abort immediately if no GPU allocated — catches silent CPU-only node assignment
+if ! nvidia-smi --query-gpu=name --format=csv,noheader > /dev/null 2>&1; then
+    echo "[error] No GPU detected on $SLURMD_NODENAME. Check --partition and --gres."
+    exit 1
+fi
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
 mkdir -p jobs/logs
 
 CONFIG="configs/${MODEL}.yaml"
@@ -46,7 +53,7 @@ echo "[job] config=$CONFIG  epochs=$EPOCHS"
 
 python train.py \
   --config      "$CONFIG" \
-  --epochs      "$EPOCHS" \
+  ${EPOCHS:+--epochs "$EPOCHS"} \
   --num-workers 4
 
 echo "[job] done $(date)"

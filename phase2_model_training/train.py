@@ -62,9 +62,12 @@ def _build_loss(name: str, tau: float) -> nn.Module:
     return nn.CrossEntropyLoss() if name == "classifier" else PinballLoss(tau=tau)
 
 
-def _to_preds(name: str, out: torch.Tensor) -> torch.Tensor:
+def _to_preds(name: str, out: torch.Tensor, cdf_threshold: float | None = None) -> torch.Tensor:
     """Convert raw model output to float cost predictions for metric computation."""
     if name == "classifier":
+        if cdf_threshold is not None:
+            cdf = torch.softmax(out, dim=-1).cumsum(dim=-1)
+            return (cdf < cdf_threshold).sum(dim=-1).clamp(max=80).float()
         return out.argmax(dim=-1).float()
     return out.squeeze(-1).clamp(0, MAX_COST).round()
 
@@ -103,6 +106,7 @@ def evaluate(
     loss_fn: nn.Module,
     device: torch.device,
     prefix: str = "val",
+    cdf_threshold: float | None = None,
 ) -> dict:
     """
     Evaluate the model and return a dict of admissibility metrics.
@@ -131,7 +135,7 @@ def evaluate(
         x, y  = x.to(device), y.to(device)
         out   = model(x)
         loss  = loss_fn(out, y.long() if model_name == "classifier" else y)
-        preds = _to_preds(model_name, out)
+        preds = _to_preds(model_name, out, cdf_threshold)
         err   = preds - y   # positive = overestimate (inadmissible)
 
         total_loss       += loss.item() * len(x)
@@ -264,6 +268,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed",           type=int,   default=42)
     p.add_argument("--num-workers",    type=int,   default=4)
     p.add_argument("--snapshot-every", type=int,   default=5,      help="save epoch snapshot every N epochs")
+    p.add_argument("--cdf-threshold",  type=float, default=None,
+                   help="classifier CDF quantile threshold for inference (None = argmax)")
 
     p.set_defaults(**yaml_defaults)   # config values sit below CLI; CLI always wins
     args = p.parse_args()
@@ -331,7 +337,8 @@ def main() -> None:
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(args.model, model, train_loader, loss_fn, optimizer, scheduler, device)
-        metrics    = evaluate(args.model, model, val_loader, loss_fn, device, prefix="val")
+        metrics    = evaluate(args.model, model, val_loader, loss_fn, device, prefix="val",
+                              cdf_threshold=args.cdf_threshold)
         val_mae    = metrics["val_mae"]
 
         train_losses.append(train_loss)
@@ -364,7 +371,8 @@ def main() -> None:
     print(f"\n── Final test evaluation (best checkpoint, val MAE={best_mae:.3f}) ──")
     best_ckpt = torch.load(out_dir / "best_model.pt", map_location=device, weights_only=True)
     model.load_state_dict(best_ckpt["model_state"])
-    test_metrics = evaluate(args.model, model, test_loader, loss_fn, device, prefix="test")
+    test_metrics = evaluate(args.model, model, test_loader, loss_fn, device, prefix="test",
+                            cdf_threshold=args.cdf_threshold)
     for k, v in test_metrics.items():
         print(f"  {k}: {v:.4f}")
 
