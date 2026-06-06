@@ -1,4 +1,5 @@
 import struct
+import time
 from pathlib import Path
 from typing import Sequence, Tuple
 
@@ -53,16 +54,23 @@ class PuzzleDataset(Dataset):
         normalize_cost: bool = True,
     ):
         paths = self._resolve_paths(paths)
+        print(f"  reading {len(paths)} file(s)…", flush=True)
+        t0 = time.time()
         all_states, all_costs = zip(*(_read_bin(p) for p in paths))
         self.states         = np.concatenate(all_states)   # uint64[N]
         self.costs          = np.concatenate(all_costs)    # uint8[N]
         self.normalize_cost = normalize_cost
+        print(f"  {len(self.states):,} records loaded in {time.time()-t0:.1f}s", flush=True)
+
         # Pre-decode nibbles once: [N, 16] uint8.  Eliminates bit-ops inside
         # __getitem__, which is called ~78M times per epoch by DataLoader workers.
         # Memory cost: N×16 bytes (~1.6 GB for 100M records, well within 32 GB).
+        print("  decoding nibbles…", flush=True)
+        t1 = time.time()
         self.nibbles = (
             (self.states[:, None] >> _SHIFTS) & np.uint64(0xF)
         ).astype(np.uint8)   # [N, 16] uint8
+        print(f"  nibbles ready in {time.time()-t1:.1f}s", flush=True)
 
     def __len__(self) -> int:
         return len(self.states)

@@ -8,6 +8,7 @@ Examples:
 """
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import matplotlib
@@ -74,6 +75,10 @@ def _to_preds(name: str, out: torch.Tensor, cdf_threshold: float | None = None) 
 
 # ── Train / evaluate ───────────────────────────────────────────────────────────
 
+_TRAIN_LOG_EVERY = 2_000   # print a progress line every N batches during training
+_EVAL_LOG_EVERY  =   500   # print a progress line every N batches during evaluation
+
+
 def train_epoch(
     model_name: str,
     model: nn.Module,
@@ -85,7 +90,10 @@ def train_epoch(
 ) -> float:
     model.train()
     total_loss, n = 0.0, 0
-    for x, y in loader:
+    n_batches = len(loader)
+    t0 = time.time()
+
+    for batch_idx, (x, y) in enumerate(loader):
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         out  = model(x)
@@ -94,6 +102,20 @@ def train_epoch(
         optimizer.step()
         total_loss += loss.item() * len(x)
         n          += len(x)
+
+        if (batch_idx + 1) % _TRAIN_LOG_EVERY == 0 or batch_idx == n_batches - 1:
+            elapsed  = time.time() - t0
+            sps      = n / elapsed
+            eta_min  = (n_batches - batch_idx - 1) * (elapsed / (batch_idx + 1)) / 60
+            pct      = (batch_idx + 1) / n_batches * 100
+            print(
+                f"  [train {pct:5.1f}%] batch {batch_idx+1}/{n_batches}"
+                f"  loss={total_loss/n:.4f}"
+                f"  {sps:,.0f} samp/s"
+                f"  ETA {eta_min:.1f} min",
+                flush=True,
+            )
+
     scheduler.step()
     return total_loss / n
 
@@ -130,8 +152,10 @@ def evaluate(
     sum_overestimate = 0.0
     max_overestimate = 0.0
     n                = 0
+    n_batches        = len(loader)
+    t0               = time.time()
 
-    for x, y in loader:
+    for batch_idx, (x, y) in enumerate(loader):
         x, y  = x.to(device), y.to(device)
         out   = model(x)
         loss  = loss_fn(out, y.long() if model_name == "classifier" else y)
@@ -152,6 +176,16 @@ def evaluate(
             max_overestimate  = max(max_overestimate, over_err.max().item())
 
         n += len(x)
+
+        if (batch_idx + 1) % _EVAL_LOG_EVERY == 0 or batch_idx == n_batches - 1:
+            elapsed = time.time() - t0
+            pct     = (batch_idx + 1) / n_batches * 100
+            print(
+                f"  [{prefix} {pct:5.1f}%] batch {batch_idx+1}/{n_batches}"
+                f"  mae={sum_abs_err/n:.3f}"
+                f"  {n/elapsed:,.0f} samp/s",
+                flush=True,
+            )
 
     inadmissibility_rate = n_inadmissible / n
     return {
