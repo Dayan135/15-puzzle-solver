@@ -1,19 +1,21 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────────────
-# Train Phase 2 heuristic model on the cluster.
+# Train Phase 2 run-3 heuristic model (v2: 272-dim input + residual target).
 #
 # Must be submitted from phase2_model_training/:
 #   cd phase2_model_training
-#   MODEL=classifier sbatch jobs/train_phase2.sh
-#   MODEL=regressor  sbatch jobs/train_phase2.sh
+#   MODEL=classifier sbatch jobs/train_phase2_v2.sh
+#   MODEL=regressor  sbatch jobs/train_phase2_v2.sh
 #
-# Optional epoch override:
-#   MODEL=classifier EPOCHS=30 sbatch jobs/train_phase2.sh
+# Optional overrides:
+#   MODEL=classifier EPOCHS=25 sbatch jobs/train_phase2_v2.sh
 #
-# All other hyperparameters (lr, batch_size, tau, seed, …) are read from
-# configs/{MODEL}.yaml — edit that file before submitting.
+# Key differences from train_phase2.sh:
+#   - Calls train_v2.py (not train.py)
+#   - Uses configs/{MODEL}_v2.yaml
+#   - Outputs to checkpoints_v2/ and results/run3/
 # ──────────────────────────────────────────────────────────────────────────────
-#SBATCH --job-name=p2-train
+#SBATCH --job-name=p2-train-v2
 #SBATCH --partition=rtx3090
 #SBATCH --account=azencot
 #SBATCH --qos=normal
@@ -29,7 +31,7 @@
 set -euo pipefail
 
 MODEL="${MODEL:-classifier}"
-EPOCHS="${EPOCHS:-}"   # empty = use YAML default (classifier=14, regressor=10)
+EPOCHS="${EPOCHS:-}"
 
 echo "[job] started $(date)  job_id=$SLURM_JOB_ID  node=$SLURMD_NODENAME  model=$MODEL"
 
@@ -39,7 +41,6 @@ source /storage/modules/packages/anaconda/etc/profile.d/conda.sh
 conda activate search
 echo "[job] python=$(which python)"
 
-# Abort immediately if no GPU allocated — catches silent CPU-only node assignment
 if ! nvidia-smi --query-gpu=name --format=csv,noheader > /dev/null 2>&1; then
     echo "[error] No GPU detected on $SLURMD_NODENAME. Check --partition and --gres."
     exit 1
@@ -48,10 +49,10 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 mkdir -p jobs/logs
 
-CONFIG="configs/${MODEL}.yaml"
-echo "[job] config=$CONFIG  epochs=$EPOCHS"
+CONFIG="configs/${MODEL}_v2.yaml"
+echo "[job] config=$CONFIG  epochs=${EPOCHS:-<from yaml>}"
 
-python train.py \
+python train_v2.py \
   --config      "$CONFIG" \
   ${EPOCHS:+--epochs "$EPOCHS"} \
   --num-workers 8
