@@ -3,7 +3,7 @@ Run-3 dataset: 256 one-hot + 16 per-cell Manhattan distances = 272-dim input.
 
 Returns (x [272], y, md_sum) per item where:
   x[0:256]   one-hot encoding identical to PuzzleDataset
-  x[256:272] Manhattan distance of each cell's tile to its goal (includes blank cell)
+  x[256:272] Manhattan distance of each cell's tile to its goal, normalised by 6 to [0, 1] (includes blank cell)
   y          h*(s) — raw optimal cost (always; residual is y - md_sum)
   md_sum     Σ MD for the 15 non-blank tiles = standard admissible Manhattan heuristic
 
@@ -27,8 +27,9 @@ from .puzzle_dataset import (
 INPUT_DIM = 272
 
 # Module-level constants reused in every __getitem__ call.
-_CELL_ROW = np.arange(16, dtype=np.int32) // 4   # row index of each cell (0–3)
-_CELL_COL = np.arange(16, dtype=np.int32) % 4    # col index of each cell (0–3)
+_CELL_ROW    = np.arange(16, dtype=np.int32) // 4   # row index of each cell (0–3)
+_CELL_COL    = np.arange(16, dtype=np.int32) % 4    # col index of each cell (0–3)
+_MAX_CELL_MD = 6.0   # max per-cell Manhattan distance in a 4×4 grid (corner to corner)
 
 
 class PuzzleDatasetV2(Dataset):
@@ -99,8 +100,8 @@ class PuzzleDatasetV2(Dataset):
         ).astype(np.float32)                                             # [16], includes blank
 
         x = np.zeros(272, dtype=np.float32)
-        x[_CELL_OFFSETS + self.nibbles[idx]] = 1.0   # one-hot [0:256]
-        x[256:272] = cell_dists                       # MD features [256:272]
+        x[_CELL_OFFSETS + self.nibbles[idx]] = 1.0           # one-hot [0:256]
+        x[256:272] = cell_dists / _MAX_CELL_MD               # MD features [256:272], normalised to [0, 1]
 
         cost = float(self.costs[idx])
         y    = cost / MAX_COST if self.normalize_cost else cost

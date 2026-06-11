@@ -11,8 +11,9 @@ Two model variants are trained independently and compared across two runs:
 |---------|-----|-------|--------|------|------------------------|
 | `PuzzleClassifier` | 2 | 256-dim one-hot | P(cost = k), k ∈ {0..80} | CrossEntropyLoss | CDF quantile (tunable threshold) |
 | `PuzzleRegressor` | 2 | 256-dim one-hot | scalar h*(s) | PinballLoss (τ=0.3) | overestimation penalized 2.3× |
-| `PuzzleClassifierV2` | 3 | 272-dim (one-hot + MD) | P(residual = k), k ∈ {0..44} | CrossEntropyLoss | CDF quantile (tunable threshold) |
+| `PuzzleClassifierV2` | 3, 4 | 272-dim (one-hot + MD, normalised) | P(residual = k), k ∈ {0..44} | CrossEntropyLoss | CDF quantile (tunable threshold) |
 | `PuzzleRegressorV2` | 3 | 272-dim (one-hot + MD) | scalar residual r(s) | PinballLoss (τ=0.3) | overestimation penalized 2.3× |
+| `PuzzleRegressorV2` | 4 | 272-dim (one-hot + MD, normalised) | scalar residual r(s) | PinballLoss (τ=0.4) | overestimation penalized 1.5× |
 
 Run 3 models predict the **residual** r(s) = h*(s) − MD_sum(s) instead of h*(s) directly.
 Empirical residual range over 100M records: [0, 34]. Phase 3 reconstructs h_hat(s) = r_hat(s) + MD_sum(s).
@@ -72,10 +73,14 @@ phase2_model_training/
     │   ├── threshold_sweep_analysis.md  ← threshold sweep analysis (job 18037374)
     │   ├── classifier/          ← test_metrics.json + threshold_sweep.json + plots/
     │   └── regressor/           ← test_metrics.json + plots/
-    ├── run3/                    ← run 3 results (pending)
-    │   ├── classifier/
-    │   └── regressor/
-    └── run3_suggestions.md      ← feature engineering rationale (superseded by implementation)
+    ├── run3/                    ← run 3 results (complete — see run3_analysis.md)
+    │   ├── run3_analysis.md
+    │   ├── classifier/          ← test_metrics.json + plots/
+    │   └── regressor/           ← test_metrics.json + plots/
+    ├── run3_suggestions.md      ← feature engineering rationale (superseded by implementation)
+    └── run4/                    ← run 4 results (pending)
+        ├── classifier/
+        └── regressor/
 ```
 
 ---
@@ -341,7 +346,13 @@ MODEL=regressor  sbatch jobs/train_phase2.sh   # 10 epochs → checkpoints/regre
 sbatch jobs/evaluate_thresholds.sh            # test split, full grid
 SPLIT=val sbatch jobs/evaluate_thresholds.sh  # val split for threshold selection
 
-# ── Run-3 Training ──────────────────────────────────────────────────────────────
+# ── Run-3 Training (DONE — jobs 18038466/18038468, results in results/run3/) ────
+# Classifier: MAE=0.930, admissibility=77.9%, over_max=22  (job 18038466, 20 ep)
+# Regressor:  MAE=1.272, admissibility=62.1%, over_max=8   (job 18038468, 15 ep)
+
+# ── Run-4 Training ──────────────────────────────────────────────────────────────
+# Changes vs run 3: τ 0.3→0.4 (regressor), MD features normalised /6 (both)
+# Results → results/run4/  |  Checkpoints → checkpoints_v2/ (overrides run-3 weights)
 
 # cluster (reads configs/classifier_v2.yaml / configs/regressor_v2.yaml)
 MODEL=classifier sbatch jobs/train_phase2_v2.sh   # 20 epochs → checkpoints_v2/classifier/
@@ -350,9 +361,9 @@ MODEL=regressor  sbatch jobs/train_phase2_v2.sh   # 15 epochs → checkpoints_v2
 # epoch override
 MODEL=classifier EPOCHS=25 sbatch jobs/train_phase2_v2.sh
 
-# ── Run-3 Threshold sweep (run after training completes) ───────────────────────
+# ── Run-4 Threshold sweep (run after training completes) ───────────────────────
 
-sbatch jobs/evaluate_thresholds_v2.sh            # test split (default)
+sbatch jobs/evaluate_thresholds_v2.sh            # test split (default) → results/run4/classifier
 SPLIT=val sbatch jobs/evaluate_thresholds_v2.sh  # val split for threshold selection
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
@@ -375,10 +386,12 @@ See `experiments/CLAUDE.md` for threshold sweep interpretation guidance.
 | `train.py` (run 2) | ✅ Complete |
 | Run 2 training | ✅ Complete — Classifier: MAE=0.996, admissibility=76.7% (job 18018359, 14 ep). Regressor: MAE=1.287, admissibility=82.4% (job 18018360, 10 ep). See `results/run2/run2_analysis.md`. |
 | Threshold sweep (run 2) | ✅ Complete — job 18037374, 40 points (10 thresh × 4 temp). Best ≥99% point: thresh=0.10 temp=2.0 (MAE=2.301, over_max=23). See `results/run2/threshold_sweep_analysis.md`. |
-| `PuzzleDatasetV2` (run 3) | ✅ Complete — 272-dim input; chunked nibble+MD init (peak RAM ~5 GB). Empirical residual max=34 over 100M records. |
-| `PuzzleClassifierV2` (run 3) | ✅ Complete — 609,837 params; 45 residual classes; `predict_quantile` accepts temperature. |
-| `PuzzleRegressorV2` (run 3) | ✅ Complete — 598,529 params; outputs residual r(s). |
-| `train_v2.py` (run 3) | ✅ Complete — residual target; (x, y, md_sum) batches; metrics in h* space. |
-| Run 3 training | 🔄 Ready to submit. OOM fix applied (chunked init). `MODEL=classifier sbatch jobs/train_phase2_v2.sh` |
-| Threshold sweep (run 3) | ⬜ Awaiting run 3 training completion. Script ready: `jobs/evaluate_thresholds_v2.sh`. |
-| Phase 3 integration | ⬜ Awaiting run 3 results |
+| `PuzzleDatasetV2` (run 3/4) | ✅ Complete — 272-dim input; chunked nibble+MD init (peak RAM ~5 GB). MD features normalised /6 (run 4). Empirical residual max=34 over 100M records. |
+| `PuzzleClassifierV2` (run 3/4) | ✅ Complete — 609,837 params; 45 residual classes; `predict_quantile` accepts temperature. |
+| `PuzzleRegressorV2` (run 3/4) | ✅ Complete — 598,529 params; outputs residual r(s). |
+| `train_v2.py` (run 3/4) | ✅ Complete — residual target; (x, y, md_sum) batches; metrics in h* space. |
+| Run 3 training | ✅ Complete — Classifier: MAE=0.930, admissibility=77.9%, over_max=22 (job 18038466, 20 ep). Regressor: MAE=1.272, admissibility=62.1%, over_max=8 (job 18038468, 15 ep). See `results/run3/run3_analysis.md`. |
+| Threshold sweep (run 3) | ⬜ Skipped — proceeding to run 4. Run if run-3 checkpoint is needed for comparison. |
+| Run 4 training | 🔄 Ready to submit. Changes: τ 0.3→0.4 (regressor), MD /6 normalisation (both). `MODEL=classifier sbatch jobs/train_phase2_v2.sh` |
+| Threshold sweep (run 4) | ⬜ Awaiting run 4 training completion. Script ready: `jobs/evaluate_thresholds_v2.sh`. |
+| Phase 3 integration | ⬜ Awaiting run 4 results |

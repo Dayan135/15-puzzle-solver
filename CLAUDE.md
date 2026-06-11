@@ -80,8 +80,8 @@ def read_dataset(path):
 | Phase | Status         | Notes                                                   |
 |-------|----------------|---------------------------------------------------------|
 | 1     | ✅ Complete     | 100M `[state, cost]` pairs generated on the cluster (job 17947513, 2026-05-31). Additive 7-8 PDBs + IDA* + stratified buckets. Output: `data/full/dataset_000.bin` (900 MB) on the cluster. |
-| 2     | In progress    | Run 2 complete. Classifier: MAE=0.996, admissibility=76.7% (job 18018359, 14 ep). Regressor: MAE=1.287, admissibility=82.4% (job 18018360, 10 ep). Threshold sweep done (job 18037374): best ≥99% admissibility is thresh=0.10 temp=2.0 (MAE=2.301, over_max=23). Run 3 implementation complete (272-dim input + residual target + chunked init); awaiting cluster training. |
-| 3     | Not started    | Awaiting run 3 trained model                            |
+| 2     | In progress    | Run 3 complete: Classifier MAE=0.930, admissibility=77.9%, over_max=22 (job 18038466, 20 ep). Regressor MAE=1.272, admissibility=62.1%, over_max=8 (job 18038468, 15 ep). Run 4 ready to submit: τ 0.3→0.4 (regressor), MD features normalised /6 (both). See `phase2_model_training/results/run3/run3_analysis.md`. |
+| 3     | Not started    | Awaiting run 4 trained model                            |
 
 ### Phase 1 dataset (cluster)
 

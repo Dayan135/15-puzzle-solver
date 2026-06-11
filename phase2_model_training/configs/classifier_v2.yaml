@@ -1,11 +1,11 @@
-# ── Phase 2 run-3 · Classifier v2 training config ──────────────────────────────
+# ── Phase 2 run-4 · Classifier v2 training config ──────────────────────────────
 # Run:  python train_v2.py --config configs/classifier_v2.yaml
 #       python train_v2.py --config configs/classifier_v2.yaml --epochs 25  # CLI overrides
 
 model: classifier
 data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
 
-# Training — 20 epochs (run 2 showed no plateau at ep 14; +6 epochs expected to reach MAE ≈ 0.97)
+# Training — 20 epochs (run 3 reached MAE=0.930 still declining; kept at 20 for run 4)
 epochs: 20
 batch_size: 1024
 lr: 0.001
@@ -21,7 +21,7 @@ out: checkpoints_v2
 snapshot_every: 5
 
 # Results (plots + test_metrics.json)
-results: results/run3
+results: results/run4
 
 # CDF quantile threshold for val/test metrics during training (None = argmax).
 # Sweep post-training with evaluate_thresholds_v2.py to find the ≥99% admissibility point.

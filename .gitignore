@@ -42,6 +42,7 @@ venv/
 
 # Phase 2 model weights — too large for git
 phase2_model_training/checkpoints/**/*.pt
+phase2_model_training/checkpoints_v2/**/*.pt
 
 # Phase 2 default training outputs — regenerated each run, not committed
 phase2_model_training/results/classifier/**

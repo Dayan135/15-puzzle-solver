@@ -1,20 +1,21 @@
-# ── Phase 2 run-3 · Regressor v2 training config ───────────────────────────────
+# ── Phase 2 run-4 · Regressor v2 training config ───────────────────────────────
 # Run:  python train_v2.py --config configs/regressor_v2.yaml
-#       python train_v2.py --config configs/regressor_v2.yaml --tau 0.2  # CLI overrides
+#       python train_v2.py --config configs/regressor_v2.yaml --tau 0.5  # CLI overrides
 
 model: regressor
 data: /home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin
 
-# Training — 15 epochs (run 2 showed continued improvement at ep 10 with some oscillation)
+# Training — 15 epochs (run 3 still declining at ep 15; kept at 15 for run 4)
 epochs: 15
 batch_size: 1024
 lr: 0.001
 seed: 42
 num_workers: 4
 
-# Pinball loss quantile: τ=0.3 → model learns 30th percentile of residual distribution
-# (~70% of h_hat predictions ≤ true h*, i.e. admissible).
-tau: 0.3
+# Pinball loss quantile: τ=0.4 → model learns 40th percentile of residual distribution.
+# Increased from 0.3 (run 3): the residual target [0,34] is heavily concentrated near 0,
+# so τ=0.3 pushed predictions too low and caused erratic admissibility (62% vs 82% in run 2).
+tau: 0.4
 
 # Run-3 feature engineering
 residual_target: true    # train on r(s) = h*(s) − MD_sum instead of h*(s) directly
@@ -25,4 +26,4 @@ out: checkpoints_v2
 snapshot_every: 5
 
 # Results (plots + test_metrics.json)
-results: results/run3
+results: results/run4

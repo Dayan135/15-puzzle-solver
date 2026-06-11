@@ -32,7 +32,7 @@ set -euo pipefail
 CHECKPOINT="${CHECKPOINT:-checkpoints_v2/classifier/best_model.pt}"
 DATA="${DATA:-/home/aviramom/projects/15-puzzle-solver/phase1_data_generation/data/full/dataset_000.bin}"
 SPLIT="${SPLIT:-test}"
-OUT_DIR="${OUT_DIR:-results/run3/classifier}"
+OUT_DIR="${OUT_DIR:-results/run4/classifier}"
 
 echo "[job] started $(date)  job_id=$SLURM_JOB_ID  node=$SLURMD_NODENAME"
 echo "[job] checkpoint=$CHECKPOINT  split=$SPLIT  out=$OUT_DIR"

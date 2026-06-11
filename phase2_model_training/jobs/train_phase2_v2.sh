@@ -1,6 +1,6 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────────────
-# Train Phase 2 run-3 heuristic model (v2: 272-dim input + residual target).
+# Train Phase 2 run-4 heuristic model (v2: 272-dim input + residual target).
 #
 # Must be submitted from phase2_model_training/:
 #   cd phase2_model_training
@@ -13,7 +13,8 @@
 # Key differences from train_phase2.sh:
 #   - Calls train_v2.py (not train.py)
 #   - Uses configs/{MODEL}_v2.yaml
-#   - Outputs to checkpoints_v2/ and results/run3/
+#   - Checkpoints → checkpoints_v2/  (overrides run-3 weights)
+#   - Results     → results/run4/
 # ──────────────────────────────────────────────────────────────────────────────
 #SBATCH --job-name=p2-train-v2
 #SBATCH --partition=rtx3090

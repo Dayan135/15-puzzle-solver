@@ -1,0 +1,10 @@
+{
+  "test_loss": 0.4972262177433687,
+  "test_mae": 1.2718881417976302,
+  "test_rmse": 1.8379320682877225,
+  "test_mean_signed_error": -0.6935911349415433,
+  "test_admissibility_rate": 0.6214166104647862,
+  "test_inadmissibility_rate": 0.3785833895352138,
+  "test_overestimate_mean": 0.7637643718764783,
+  "test_overestimate_max": 8.001731872558594
+}
