@@ -1,0 +1,59 @@
+# Cluster benchmark: 1000 instances (100-move walks), 14 heuristics x 6
+# algorithms = 84,000 runs, sharded one heuristic per slurm array task:
+#
+#   sbatch jobs/run_grid_walk1000.sh        # array 0-13, CPU-only
+#
+# Each task runs: python run_experiments.py --config configs/cluster_walk1000.yaml \
+#                   --only-heuristic $SLURM_ARRAY_TASK_ID \
+#                   --out results/cluster/walk1000_hNN.csv
+#
+# Merge + summarize after all tasks finish:
+#   python -m benchmark.summarize results/cluster/walk1000_h*.csv \
+#       --csv results/cluster/walk1000_summary.csv
+#
+# device: cpu on all NN heuristics — at batch=1 the forward passes are <=4
+# states, where CPU beats GPU ~7x (kernel-launch overhead dominates).
+#
+# Heuristic shard map: 0=pdb, 1=regressor, 2-13=classifier grid
+# (threshold x temperature, ordered below).
+instances: testset/walk1000.csv
+out: results/cluster/walk1000_all.csv   # overridden per shard via --out
+engine:
+  batch_size: 1
+  max_expansions: 1000000
+  max_time_s: 300
+algorithms:
+  - {type: idastar}
+  - {type: wastar, w: 1.0}
+  - {type: wastar, w: 2.0}
+  - {type: wastar, w: 5.0}
+  - {type: wastar, w: 10.0}
+  - {type: gbfs}
+heuristics:
+  - {type: pdb, pdb_dir: ../phase1_data_generation/data/pdbs}                              # 0
+  - {type: regressor, checkpoint: ../phase2_model_training/checkpoints/regressor/best_model.pt,
+     device: cpu}                        # 1
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.2, temperature: 1.0, device: cpu}   # 2
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.3, temperature: 1.0, device: cpu}   # 3
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.4, temperature: 1.0, device: cpu}   # 4
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.5, temperature: 1.0, device: cpu}   # 5
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.2, temperature: 1.5, device: cpu}   # 6
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.3, temperature: 1.5, device: cpu}   # 7
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.4, temperature: 1.5, device: cpu}   # 8
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.5, temperature: 1.5, device: cpu}   # 9
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.2, temperature: 2.0, device: cpu}   # 10
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.3, temperature: 2.0, device: cpu}   # 11
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.4, temperature: 2.0, device: cpu}   # 12
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.5, temperature: 2.0, device: cpu}   # 13

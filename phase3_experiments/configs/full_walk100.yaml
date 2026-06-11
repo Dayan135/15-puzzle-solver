@@ -1,0 +1,24 @@
+# Full local benchmark: 100 instances from 100-move random walks.
+# Grid: 4 heuristics x 4 algorithms = 1600 runs.
+# pdb runs first: idastar/wastar(1.0)+pdb are admissible w=1 -> exact ground
+# truth for every instance via the summarizer fallback.
+#   python -m benchmark.gen_instances --n 100 --mode scramble --moves 100 --seed 1 --out testset/walk100.csv
+#   python run_experiments.py --config configs/full_walk100.yaml
+instances: testset/walk100.csv
+out: results/walk100.csv
+engine:
+  batch_size: 1            # faithful node counts
+  max_expansions: 1000000  # heaviest observed run is ~294k; cap bounds RAM too
+  max_time_s: 300          # bounds the NN configs
+algorithms:
+  - {type: idastar}
+  - {type: wastar, w: 1.0}
+  - {type: wastar, w: 2.0}
+  - {type: gbfs}
+heuristics:
+  - {type: pdb, pdb_dir: ../phase1_data_generation/data/pdbs}
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.5, temperature: 1.0}
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.10, temperature: 2.0}
+  - {type: regressor, checkpoint: ../phase2_model_training/checkpoints/regressor/best_model.pt}

@@ -24,6 +24,7 @@ Makefile
 phase1_data_generation/data/
 phase1_data_generation/jobs/logs/
 phase2_model_training/jobs/logs/
+phase3_experiments/jobs/logs/
 
 # Python bytecode
 __pycache__/
@@ -47,3 +48,8 @@ phase2_model_training/checkpoints/**/*.pt
 phase2_model_training/results/classifier/**
 phase2_model_training/results/regressor/**
 # Named run archives (e.g. classifier_run1/) are intentionally tracked
+
+# Phase 3 benchmark outputs — regenerated each run, not committed
+# (column documentation stays tracked)
+phase3_experiments/results/*
+!phase3_experiments/results/CSV_EXPLANATION.md

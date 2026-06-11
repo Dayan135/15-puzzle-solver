@@ -1,0 +1,23 @@
+# Local smoke grid: shallow scrambles, run-2 checkpoints, no PDB (cluster only).
+# Run from phase3_experiments/:
+#   python -m benchmark.gen_instances --n 20 --mode scramble --moves 30 --seed 0 --out testset/smoke.csv
+#   python run_experiments.py --config configs/smoke_local.yaml
+instances: testset/smoke.csv
+out: results/smoke.csv
+# batch_size=1 keeps nodes_expanded faithful (batch>1 inflates counts by up to
+# batch_size x for well-guided heuristics; use it only for throughput tests).
+engine:
+  batch_size: 1
+  max_expansions: 100000
+  max_time_s: 60
+algorithms:
+  - {type: wastar, w: 1.0}
+  - {type: wastar, w: 2.0}
+  - {type: gbfs}
+heuristics:
+  - {type: pdb, pdb_dir: ../phase1_data_generation/data/pdbs}
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.5, temperature: 1.0}
+  - {type: classifier, checkpoint: ../phase2_model_training/checkpoints/classifier/best_model.pt,
+     threshold: 0.10, temperature: 2.0}
+  - {type: regressor, checkpoint: ../phase2_model_training/checkpoints/regressor/best_model.pt}
